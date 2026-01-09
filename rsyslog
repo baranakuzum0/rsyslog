@@ -1,0 +1,10 @@
+---
+- name: Linux Logging Altyapisi Kurulumu
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Placeholder
+      debug:
+        msg: "Logging automation basliyor"
