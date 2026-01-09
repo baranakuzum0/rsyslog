@@ -2,9 +2,29 @@
 - name: Linux Logging Altyapisi Kurulumu
   hosts: all
   become: true
-  gather_facts: true
+  gather_facts: false
 
   tasks:
-    - name: Placeholder
+    - name: Logging automation basliyor
       debug:
-        msg: "Logging automation basliyor"
+        msg: "Auditd ve Rsyslog kurulumu basladi"
+
+    - name: Auditd ve Rsyslog paketlerini kur
+      apt:
+        name:
+          - auditd
+          - rsyslog
+        state: present
+        update_cache: yes
+
+    - name: Auditd servisini enable ve start et
+      service:
+        name: auditd
+        state: started
+        enabled: yes
+
+    - name: Rsyslog servisini enable ve start et
+      service:
+        name: rsyslog
+        state: started
+        enabled: yes
