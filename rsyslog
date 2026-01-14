@@ -1,30 +1,111 @@
 ---
-- name: Linux Logging Altyapisi Kurulumu
+- name: RSYSLOG + Auditd + Bash Log Kurulumu
   hosts: all
   become: true
-  gather_facts: false
 
   tasks:
-    - name: Logging automation basliyor
-      debug:
-        msg: "Auditd ve Rsyslog kurulumu basladi"
 
-    - name: Auditd ve Rsyslog paketlerini kur
-      apt:
-        name:
-          - auditd
-          - rsyslog
-        state: present
-        update_cache: yes
+  - name: Auditd kurulumu
+    apt:
+      name: auditd
+      state: present
+      update_cache: yes
 
-    - name: Auditd servisini enable ve start et
-      service:
-        name: auditd
-        state: started
-        enabled: yes
+  - name: Auditd servisini enable et
+    systemd:
+      name: auditd
+      enabled: yes
+      state: started
 
-    - name: Rsyslog servisini enable ve start et
-      service:
-        name: rsyslog
-        state: started
-        enabled: yes
+  - name: Bash log kodunu /etc/profile dosyasına ekle
+    blockinfile:
+      path: /etc/profile
+      block: |
+        # Bash Log
+        PORT=`who am i | awk '{ print $5 }' | sed 's/(//g' | sed 's/)//g'`
+        logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT
+        function history_to_syslog
+        {
+        declare cmd
+        declare p_dir
+        declare LOG_NAME
+        cmd=$(history 1)
+        cmd=$(echo $cmd |awk '{print substr($0,length($1)+2)}')
+        p_dir=$(pwd)
+        LOG_NAME=$(echo $LOGNAME)
+        if [ "$cmd" != "$old_command" ]; then
+        logger -p local5.debug -- Bash SESSION = $$, from_remote_host = $PORT, USER = $LOG_NAME, PWD = $p_dir, CMD = "${cmd}"
+        fi
+        old_command=$cmd
+        }
+        trap history_to_syslog DEBUG || EXIT
+
+  - name: Bash log kodunu /root/.bashrc dosyasına ekle
+    blockinfile:
+      path: /root/.bashrc
+      block: |
+        # Bash Log
+        PORT=`who am i | awk '{ print $5 }' | sed 's/(//g' | sed 's/)//g'`
+        logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT
+        function history_to_syslog
+        {
+        declare cmd
+        declare p_dir
+        declare LOG_NAME
+        cmd=$(history 1)
+        cmd=$(echo $cmd |awk '{print substr($0,length($1)+2)}')
+        p_dir=$(pwd)
+        LOG_NAME=$(echo $LOGNAME)
+        if [ "$cmd" != "$old_command" ]; then
+        logger -p local5.debug -- Bash SESSION = $$, from_remote_host = $PORT, USER = $LOG_NAME, PWD = $p_dir, CMD = "${cmd}"
+        fi
+        old_command=$cmd
+        }
+        trap history_to_syslog DEBUG || EXIT
+
+  - name: Auditd syslog plugin aktif et
+    replace:
+      path: /etc/audisp/plugins.d/syslog.conf
+      regexp: '^active =.*'
+      replace: 'active = yes'
+
+  - name: Rsyslog ana config sonuna audit ve remote log ekle
+    blockinfile:
+      path: /etc/rsyslog.conf
+      block: |
+        ############  RSYSLOG  QRADAR
+        local6.* @192.168.186.10:514
+        local5.*,local6.* @192.168.5.52:514
+        ########################## FOR AUDITD
+        $ModLoad imfile
+        $InputFileName /var/log/audit/audit.log
+        $InputFileTag tag_audit_log_.$hostname:
+        $InputFileStateFile audit_log
+        $InputFileSeverity info
+        $InputFileFacility local6
+        $InputRunFileMonitor
+
+  - name: Bash log dosyası oluştur
+    file:
+      path: /var/log/bash.log
+      state: touch
+      owner: root
+      group: root
+      mode: '0640'
+
+  - name: Bash için rsyslog config oluştur
+    copy:
+      dest: /etc/rsyslog.d/bash.conf
+      content: |
+        # Bash log
+        local5.debug           /var/log/bash.log
+
+  - name: rsyslog restart
+    systemd:
+      name: rsyslog
+      state: restarted
+
+  - name: auditd restart
+    systemd:
+      name: auditd
+      state: restarted
