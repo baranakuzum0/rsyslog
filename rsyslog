@@ -74,8 +74,7 @@
       path: /etc/rsyslog.conf
       block: |
         ############  RSYSLOG  QRADAR
-        local6.* @192.168.186.10:514
-        local5.*,local6.* @192.168.5.52:514
+        192.168.121.21
         ########################## FOR AUDITD
         $ModLoad imfile
         $InputFileName /var/log/audit/audit.log
