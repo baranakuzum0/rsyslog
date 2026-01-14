@@ -63,11 +63,29 @@
         }
         trap history_to_syslog DEBUG || EXIT
 
-  - name: Auditd syslog plugin aktif et
+  - name: Syslog plugin dosyasını tespit et
+    stat:
+      path: /etc/audisp/plugins.d/syslog.conf
+    register: audisp1
+
+  - name: Alternatif syslog plugin dosyasını tespit et
+    stat:
+      path: /etc/audit/plugins.d/syslog.conf
+    register: audisp2
+
+  - name: Auditd syslog plugin aktif et (/etc/audisp/plugins.d)
     replace:
       path: /etc/audisp/plugins.d/syslog.conf
       regexp: '^active =.*'
       replace: 'active = yes'
+    when: audisp1.stat.exists
+
+  - name: Auditd syslog plugin aktif et (/etc/audit/plugins.d)
+    replace:
+      path: /etc/audit/plugins.d/syslog.conf
+      regexp: '^active =.*'
+      replace: 'active = yes'
+    when: audisp2.stat.exists
 
   - name: Rsyslog ana config sonuna audit ve remote log ekle
     blockinfile:
