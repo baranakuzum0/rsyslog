@@ -67,13 +67,30 @@
           trap history_to_syslog DEBUG
 
     - name: Auditd syslog plugin aktif et (varsa)
-      lineinfile:
-        path: "{{ item }}"
-        line: "active = yes"
-        create: yes
-      loop:
-        - /etc/audisp/plugins.d/syslog.conf
-        - /etc/audit/plugins.d/syslog.conf
+      block:
+        - name: /etc/audisp/plugins.d/syslog.conf var mı kontrol et
+          stat:
+            path: /etc/audisp/plugins.d/syslog.conf
+          register: audisp_conf
+
+        - name: /etc/audit/plugins.d/syslog.conf var mı kontrol et
+          stat:
+            path: /etc/audit/plugins.d/syslog.conf
+          register: audit_conf
+
+        - name: /etc/audisp/plugins.d/syslog.conf içinde active = yes yap
+          lineinfile:
+            path: /etc/audisp/plugins.d/syslog.conf
+            regexp: '^active\s*='
+            line: 'active = yes'
+          when: audisp_conf.stat.exists
+
+        - name: /etc/audit/plugins.d/syslog.conf içinde active = yes yap
+          lineinfile:
+            path: /etc/audit/plugins.d/syslog.conf
+            regexp: '^active\s*='
+            line: 'active = yes'
+          when: audit_conf.stat.exists
 
     - name: Rsyslog ana config sonuna audit ve remote log ekle
       blockinfile:
