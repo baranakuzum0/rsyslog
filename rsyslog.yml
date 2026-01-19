@@ -3,167 +3,128 @@
   hosts: all
   become: true
 
-  vars:
-    remote_syslog_1: "192.168.121.21"
-
   tasks:
 
-    - name: Auditd kurulumu
-      apt:
-        name: auditd
-        state: present
-        update_cache: yes
-      when: ansible_facts['os_family'] == "Debian"
+  - name: Auditd kurulumu
+    apt:
+      name: auditd
+      state: present
+      update_cache: yes
 
-    - name: Auditd kurulumu (SUSE)
-      zypper:
-        name: audit
-        state: present
-      when: ansible_facts['os_family'] == "Suse"
+  - name: Auditd servisini enable et
+    systemd:
+      name: auditd
+      enabled: yes
+      state: started
 
-    - name: Auditd servisini enable et
-      systemd:
-        name: auditd
-        enabled: yes
-        state: started
+  - name: Bash log kodunu /etc/profile dosyasına ekle
+    blockinfile:
+      path: /etc/profile
+      block: |
+        # Bash Log
+        PORT=`who am i | awk '{ print $5 }' | sed 's/(//g' | sed 's/)//g'`
+        logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT
+        function history_to_syslog
+        {
+        declare cmd
+        declare p_dir
+        declare LOG_NAME
+        cmd=$(history 1)
+        cmd=$(echo $cmd |awk '{print substr($0,length($1)+2)}')
+        p_dir=$(pwd)
+        LOG_NAME=$(echo $LOGNAME)
+        if [ "$cmd" != "$old_command" ]; then
+        logger -p local5.debug -- Bash SESSION = $$, from_remote_host = $PORT, USER = $LOG_NAME, PWD = $p_dir, CMD = "${cmd}"
+        fi
+        old_command=$cmd
+        }
+        trap history_to_syslog DEBUG || EXIT
 
-    - name: Bash log kodunu /etc/profile dosyasına ekle
-      blockinfile:
-        path: /etc/profile
-        block: |
-          # Bash Log
-          PORT=`who am i | awk '{ print $5 }' | sed 's/(//g' | sed 's/)//g'`
-          logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT
-          function history_to_syslog
-          {
-              declare cmd
-              declare p_dir
-              declare LOG_NAME
-              cmd=$(history 1)
-              cmd=$(echo $cmd | awk '{print substr($0,length($1)+2)}')
-              p_dir=$(pwd)
-              LOG_NAME=$(echo $LOGNAME)
-              if [ "$cmd" != "$old_command" ]; then
-                  logger -p local5.debug -- Bash SESSION = $$, from_remote_host = $PORT, USER = $LOG_NAME, PWD = $p_dir, CMD = "${cmd}"
-              fi
-              old_command=$cmd
-          }
-          trap history_to_syslog DEBUG
+  - name: Bash log kodunu /root/.bashrc dosyasına ekle
+    blockinfile:
+      path: /root/.bashrc
+      block: |
+        # Bash Log
+        PORT=`who am i | awk '{ print $5 }' | sed 's/(//g' | sed 's/)//g'`
+        logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT
+        function history_to_syslog
+        {
+        declare cmd
+        declare p_dir
+        declare LOG_NAME
+        cmd=$(history 1)
+        cmd=$(echo $cmd |awk '{print substr($0,length($1)+2)}')
+        p_dir=$(pwd)
+        LOG_NAME=$(echo $LOGNAME)
+        if [ "$cmd" != "$old_command" ]; then
+        logger -p local5.debug -- Bash SESSION = $$, from_remote_host = $PORT, USER = $LOG_NAME, PWD = $p_dir, CMD = "${cmd}"
+        fi
+        old_command=$cmd
+        }
+        trap history_to_syslog DEBUG || EXIT
 
-    - name: Bash log kodunu /root/.bashrc dosyasına ekle
-      blockinfile:
-        path: /root/.bashrc
-        block: |
-          # Bash Log
-          PORT=`who am i | awk '{ print $5 }' | sed 's/(//g' | sed 's/)//g'`
-          logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT
-          function history_to_syslog
-          {
-              declare cmd
-              declare p_dir
-              declare LOG_NAME
-              cmd=$(history 1)
-              cmd=$(echo $cmd | awk '{print substr($0,length($1)+2)}')
-              p_dir=$(pwd)
-              LOG_NAME=$(echo $LOGNAME)
-              if [ "$cmd" != "$old_command" ]; then
-                  logger -p local5.debug -- Bash SESSION = $$, from_remote_host = $PORT, USER = $LOG_NAME, PWD = $p_dir, CMD = "${cmd}"
-              fi
-              old_command=$cmd
-          }
-          trap history_to_syslog DEBUG
+  - name: Syslog plugin dosyasını tespit et
+    stat:
+      path: /etc/audisp/plugins.d/syslog.conf
+    register: audisp1
 
-    - name: Auditd syslog plugin aktif et (varsa)
-      block:
-        - name: /etc/audisp/plugins.d/syslog.conf var mı kontrol et
-          stat:
-            path: /etc/audisp/plugins.d/syslog.conf
-          register: audisp_conf
+  - name: Alternatif syslog plugin dosyasını tespit et
+    stat:
+      path: /etc/audit/plugins.d/syslog.conf
+    register: audisp2
 
-        - name: /etc/audit/plugins.d/syslog.conf var mı kontrol et
-          stat:
-            path: /etc/audit/plugins.d/syslog.conf
-          register: audit_conf
+  - name: Auditd syslog plugin aktif et (/etc/audisp/plugins.d)
+    replace:
+      path: /etc/audisp/plugins.d/syslog.conf
+      regexp: '^active =.*'
+      replace: 'active = yes'
+    when: audisp1.stat.exists
 
-        - name: /etc/audisp/plugins.d/syslog.conf içinde active = yes yap
-          lineinfile:
-            path: /etc/audisp/plugins.d/syslog.conf
-            regexp: '^active\s*='
-            line: 'active = yes'
-          when: audisp_conf.stat.exists
+  - name: Auditd syslog plugin aktif et (/etc/audit/plugins.d)
+    replace:
+      path: /etc/audit/plugins.d/syslog.conf
+      regexp: '^active =.*'
+      replace: 'active = yes'
+    when: audisp2.stat.exists
 
-        - name: /etc/audit/plugins.d/syslog.conf içinde active = yes yap
-          lineinfile:
-            path: /etc/audit/plugins.d/syslog.conf
-            regexp: '^active\s*='
-            line: 'active = yes'
-          when: audit_conf.stat.exists
+  - name: Rsyslog ana config sonuna audit ve remote log ekle
+    blockinfile:
+      path: /etc/rsyslog.conf
+      block: |
+        ############  RSYSLOG  QRADAR
+        192.168.121.21
+        ########################## FOR AUDITD
+        $ModLoad imfile
+        $InputFileName /var/log/audit/audit.log
+        $InputFileTag tag_audit_log_.$hostname:
+        $InputFileStateFile audit_log
+        $InputFileSeverity info
+        $InputFileFacility local6
+        $InputRunFileMonitor
 
-    - name: Rsyslog ana config sonuna audit ve remote log ekle
-      blockinfile:
-        path: /etc/rsyslog.conf
-        block: |
-          ############  RSYSLOG  QRADAR
-          local6.*  @{{ remote_syslog_1 }}:514
-          ########################## FOR AUDITD
-          $ModLoad imfile
-          $InputFileName /var/log/audit/audit.log
-          $InputFileTag tag_audit_log_.$hostname:
-          $InputFileStateFile audit_log
-          $InputFileSeverity info
-          $InputFileFacility local6
-          $InputRunFileMonitor
+  - name: Bash log dosyası oluştur
+    file:
+      path: /var/log/bash.log
+      state: touch
+      owner: root
+      group: root
+      mode: '0640'
 
-    - name: Bash log dosyası oluştur
-      file:
-        path: /var/log/bash.log
-        state: touch
-        owner: root
-        group: root
-        mode: '0640'
+  - name: Bash için rsyslog config oluştur
+    copy:
+      dest: /etc/rsyslog.d/bash.conf
+      content: |
+        # Bash log
+        local5.debug           /var/log/bash.log
 
-    - name: Bash için rsyslog config oluştur
-      copy:
-        dest: /etc/rsyslog.d/bash.conf
-        content: |
-          # Bash log
-          local5.debug           /var/log/bash.log
+  - name: rsyslog restart
+    systemd:
+      name: rsyslog
+      state: restarted
 
-    - name: 50-default.conf dosyasını OS family'ye göre ayarla
-      block:
-        - name: Ubuntu/Debian için 50-default.conf
-          blockinfile:
-            path: /etc/rsyslog.d/50-default.conf
-            marker: "# {mark} ANSIBLE MANAGED BLOCK UBUNTU"
-            block: |
-              auth,authpriv.*                 /var/log/auth.log
-              *.*;auth,authpriv.none          -/var/log/syslog
-              cron.*                           /var/log/cron.log
-              local1.*                         /var/log/sudo.log
-              mail.err                          /var/log/mail.err
-              *.emerg                           :omusrmsg:*
+  - name: auditd restart
+    systemd:
+      name: auditd
+      state: restarted
 
-          when: ansible_facts['os_family'] == "Debian"
-
-        - name: SUSE için 50-default.conf
-          blockinfile:
-            path: /etc/rsyslog.d/50-default.conf
-            marker: "# {mark} ANSIBLE MANAGED BLOCK SUSE"
-            block: |
-              cron.*                  /var/log/cron.log
-              kern.*                  /var/log/kern.log
-              local1.*                /var/log/sudo.log
-              auth.*                  /var/log/auth.log
-              authpriv.*              /var/log/secure
-              *.*;auth,authpriv.none  -/var/log/syslog
-          when: ansible_facts['os_family'] == "Suse"
-
-    - name: rsyslog restart
-      systemd:
-        name: rsyslog
-        state: restarted
-
-    - name: auditd restart
-      systemd:
-        name: auditd
-        state: restarted
+bu playbook bak bakalım
