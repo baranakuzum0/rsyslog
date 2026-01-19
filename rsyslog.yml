@@ -1,7 +1,10 @@
 ---
-- name: RSYSLOG + Auditd + Bash Log Kurulumu
+- name: RSYSLOG + Auditd + Bash Log Kurulumu (Ubuntu/Debian)
   hosts: all
   become: true
+
+  vars:
+    remote_syslog_1: "192.168.121.21"
 
   tasks:
 
@@ -26,19 +29,19 @@
         logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT
         function history_to_syslog
         {
-        declare cmd
-        declare p_dir
-        declare LOG_NAME
-        cmd=$(history 1)
-        cmd=$(echo $cmd |awk '{print substr($0,length($1)+2)}')
-        p_dir=$(pwd)
-        LOG_NAME=$(echo $LOGNAME)
-        if [ "$cmd" != "$old_command" ]; then
-        logger -p local5.debug -- Bash SESSION = $$, from_remote_host = $PORT, USER = $LOG_NAME, PWD = $p_dir, CMD = "${cmd}"
-        fi
-        old_command=$cmd
+            declare cmd
+            declare p_dir
+            declare LOG_NAME
+            cmd=$(history 1)
+            cmd=$(echo $cmd | awk '{print substr($0,length($1)+2)}')
+            p_dir=$(pwd)
+            LOG_NAME=$(echo $LOGNAME)
+            if [ "$cmd" != "$old_command" ]; then
+                logger -p local5.debug -- Bash SESSION = $$, from_remote_host = $PORT, USER = $LOG_NAME, PWD = $p_dir, CMD = "${cmd}"
+            fi
+            old_command=$cmd
         }
-        trap history_to_syslog DEBUG || EXIT
+        trap history_to_syslog DEBUG
 
   - name: Bash log kodunu /root/.bashrc dosyasına ekle
     blockinfile:
@@ -49,50 +52,33 @@
         logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT
         function history_to_syslog
         {
-        declare cmd
-        declare p_dir
-        declare LOG_NAME
-        cmd=$(history 1)
-        cmd=$(echo $cmd |awk '{print substr($0,length($1)+2)}')
-        p_dir=$(pwd)
-        LOG_NAME=$(echo $LOGNAME)
-        if [ "$cmd" != "$old_command" ]; then
-        logger -p local5.debug -- Bash SESSION = $$, from_remote_host = $PORT, USER = $LOG_NAME, PWD = $p_dir, CMD = "${cmd}"
-        fi
-        old_command=$cmd
+            declare cmd
+            declare p_dir
+            declare LOG_NAME
+            cmd=$(history 1)
+            cmd=$(echo $cmd | awk '{print substr($0,length($1)+2)}')
+            p_dir=$(pwd)
+            LOG_NAME=$(echo $LOGNAME)
+            if [ "$cmd" != "$old_command" ]; then
+                logger -p local5.debug -- Bash SESSION = $$, from_remote_host = $PORT, USER = $LOG_NAME, PWD = $p_dir, CMD = "${cmd}"
+            fi
+            old_command=$cmd
         }
-        trap history_to_syslog DEBUG || EXIT
-
-  - name: Syslog plugin dosyasını tespit et
-    stat:
-      path: /etc/audisp/plugins.d/syslog.conf
-    register: audisp1
-
-  - name: Alternatif syslog plugin dosyasını tespit et
-    stat:
-      path: /etc/audit/plugins.d/syslog.conf
-    register: audisp2
+        trap history_to_syslog DEBUG
 
   - name: Auditd syslog plugin aktif et (/etc/audisp/plugins.d)
     replace:
       path: /etc/audisp/plugins.d/syslog.conf
       regexp: '^active =.*'
       replace: 'active = yes'
-    when: audisp1.stat.exists
-
-  - name: Auditd syslog plugin aktif et (/etc/audit/plugins.d)
-    replace:
-      path: /etc/audit/plugins.d/syslog.conf
-      regexp: '^active =.*'
-      replace: 'active = yes'
-    when: audisp2.stat.exists
+    when: ansible_facts['os_family'] == "Debian" or ansible_facts['os_family'] == "Ubuntu"
 
   - name: Rsyslog ana config sonuna audit ve remote log ekle
     blockinfile:
       path: /etc/rsyslog.conf
       block: |
         ############  RSYSLOG  QRADAR
-        192.168.121.21
+        local6.*  @{{ remote_syslog_1 }}:514
         ########################## FOR AUDITD
         $ModLoad imfile
         $InputFileName /var/log/audit/audit.log
@@ -116,6 +102,20 @@
       content: |
         # Bash log
         local5.debug           /var/log/bash.log
+
+  - name: 50-default.conf dosyasını Ubuntu/Debian uyumlu hale getir
+    copy:
+      dest: /etc/rsyslog.d/50-default.conf
+      content: |
+        cron.*                  /var/log/cron.log
+        kern.*                  /var/log/kern.log
+        local1.*                /var/log/sudo.log
+        auth.*                  /var/log/auth.log
+        authpriv.*              /var/log/secure
+        *.*;auth,authpriv.none  -/var/log/syslog
+      owner: root
+      group: root
+      mode: '0644'
 
   - name: rsyslog restart
     systemd:
