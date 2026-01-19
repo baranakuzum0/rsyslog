@@ -1,5 +1,5 @@
 ---
-- name: RSYSLOG + Auditd + Bash Log Kurulumu (Ubuntu/Debian)
+- name: RSYSLOG + Auditd + Bash Log Kurulumu
   hosts: all
   become: true
 
@@ -13,6 +13,13 @@
         name: auditd
         state: present
         update_cache: yes
+      when: ansible_facts['os_family'] == "Debian"
+
+    - name: Auditd kurulumu (SUSE)
+      zypper:
+        name: audit
+        state: present
+      when: ansible_facts['os_family'] == "Suse"
 
     - name: Auditd servisini enable et
       systemd:
@@ -122,19 +129,34 @@
           # Bash log
           local5.debug           /var/log/bash.log
 
-    - name: 50-default.conf dosyasını Ubuntu/Debian uyumlu hale getir
-      copy:
-        dest: /etc/rsyslog.d/50-default.conf
-        content: |
-          cron.*                  /var/log/cron.log
-          kern.*                  /var/log/kern.log
-          local1.*                /var/log/sudo.log
-          auth.*                  /var/log/auth.log
-          authpriv.*              /var/log/secure
-          *.*;auth,authpriv.none  -/var/log/syslog
-        owner: root
-        group: root
-        mode: '0644'
+    - name: 50-default.conf dosyasını OS family'ye göre ayarla
+      block:
+        - name: Ubuntu/Debian için 50-default.conf
+          blockinfile:
+            path: /etc/rsyslog.d/50-default.conf
+            marker: "# {mark} ANSIBLE MANAGED BLOCK UBUNTU"
+            block: |
+              auth,authpriv.*                 /var/log/auth.log
+              *.*;auth,authpriv.none          -/var/log/syslog
+              cron.*                           /var/log/cron.log
+              local1.*                         /var/log/sudo.log
+              mail.err                          /var/log/mail.err
+              *.emerg                           :omusrmsg:*
+
+          when: ansible_facts['os_family'] == "Debian"
+
+        - name: SUSE için 50-default.conf
+          blockinfile:
+            path: /etc/rsyslog.d/50-default.conf
+            marker: "# {mark} ANSIBLE MANAGED BLOCK SUSE"
+            block: |
+              cron.*                  /var/log/cron.log
+              kern.*                  /var/log/kern.log
+              local1.*                /var/log/sudo.log
+              auth.*                  /var/log/auth.log
+              authpriv.*              /var/log/secure
+              *.*;auth,authpriv.none  -/var/log/syslog
+          when: ansible_facts['os_family'] == "Suse"
 
     - name: rsyslog restart
       systemd:
