@@ -66,12 +66,14 @@
         }
         trap history_to_syslog DEBUG
 
-  - name: Auditd syslog plugin aktif et (/etc/audisp/plugins.d)
-    replace:
-      path: /etc/audisp/plugins.d/syslog.conf
-      regexp: '^active =.*'
-      replace: 'active = yes'
-    when: ansible_facts['os_family'] == "Debian" or ansible_facts['os_family'] == "Ubuntu"
+- name: Auditd syslog plugin aktif et (varsa)
+  lineinfile:
+    path: "{{ item }}"
+    line: "active = yes"
+    create: yes
+  loop:
+    - /etc/audisp/plugins.d/syslog.conf
+    - /etc/audit/plugins.d/syslog.conf
 
   - name: Rsyslog ana config sonuna audit ve remote log ekle
     blockinfile:
