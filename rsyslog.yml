@@ -1,163 +1,258 @@
 ---
-- name: RSYSLOG + Auditd + Bash Log Kurulumu (Ubuntu/Debian)
+- name: RSYSLOG + Auditd + Bash Log Kurulumu
   hosts: all
   become: yes
   vars:
-    bash_log_file: /var/log/bash.log
-    remote_syslog_ip: "192.168.121.21"
-
+    remote_syslog_server: "192.168.121.21"
+    
   tasks:
-
-    # --------------------------
-    # 1️⃣ Paket Kurulumu
-    # --------------------------
-    - name: Auditd ve Audispd-plugins kurulumu
+    # 1. Paket kurulumu - her zaman idempotent
+    - name: Güncelleme ve paket kurulumu
       apt:
-        name:
-          - auditd
-          - audispd-plugins
+        name: "{{ item }}"
         state: present
         update_cache: yes
+      loop:
+        - auditd
+        - rsyslog
+      tags: installation
 
-    # --------------------------
-    # 2️⃣ Servisler
-    # --------------------------
-    - name: Rsyslog servisinin çalışır ve aktif olmasını sağla
+    # 2. Servisleri etkinleştirme
+    - name: Servisleri etkinleştir ve başlat
       systemd:
-        name: rsyslog
+        name: "{{ item }}"
         enabled: yes
         state: started
+        daemon_reload: yes
+      loop:
+        - rsyslog
+        - auditd
+      tags: services
 
-    - name: Auditd servisinin çalışır ve aktif olmasını sağla
-      systemd:
-        name: auditd
-        enabled: yes
-        state: started
+    # 3. BASH LOGLAMA - Marker ile kontrol
+    - name: Bash loglama kodlarını tanımla
+      set_fact:
+        bash_log_code: |
+          # Bash Log
+          PORT=`who am i | awk '{ print $5 }' | sed 's/(//g' | sed 's/)//g'`
+          logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT
+          function history_to_syslog
+          {
+          declare cmd
+          declare p_dir
+          declare LOG_NAME
+          cmd=$(history 1)
+          cmd=$(echo $cmd |awk '{print substr($0,length($1)+2)}')
+          p_dir=$(pwd)
+          LOG_NAME=$(echo $LOGNAME)
+          if [ "$cmd" != "$old_command" ]; then
+          logger -p local5.debug -- Bash SESSION = $$, from_remote_host = $PORT, USER = $LOG_NAME, PWD = $p_dir, CMD = "${cmd}"
+          fi
+          old_command=$cmd
+          }
+          trap history_to_syslog DEBUG || EXIT
 
-    # --------------------------
-    # 3️⃣ Bash log fonksiyonu /etc/profile
-    # --------------------------
-    - name: Bash log fonksiyonunu /etc/profile dosyasına ekle, varsa atla
+    # /etc/profile için - Marker kontrolü
+    - name: /etc/profile'da Ansible marker'ını kontrol et
+      shell: |
+        grep -q "# ANSIBLE MANAGED BLOCK - BASH LOGGING" /etc/profile
+      register: ansible_marker_profile
+      ignore_errors: yes
+      changed_when: false
+      tags: bash_config
+
+    - name: /etc/profile'a sadece Ansible marker'ı yoksa ekle
       blockinfile:
         path: /etc/profile
-        block: |
-          # Bash Log
-          PORT=$(who am i | awk '{print $5}' | tr -d '()')
-          function history_to_syslog {
-              local cmd=$(history 1 | awk '{$1=""; print substr($0,2)}')
-              local p_dir=$(pwd)
-              local LOG_NAME=$LOGNAME
-              if [ "$cmd" != "$old_command" ]; then
-                  logger -p local5.debug -- Bash SESSION=$$, from_remote_host=$PORT, USER=$LOG_NAME, PWD=$p_dir, CMD="$cmd"
-              fi
-              old_command=$cmd
-          }
-          trap history_to_syslog DEBUG
-        marker: "# ANSIBLE-BASH-PROFILE-BEGIN"
+        block: "{{ bash_log_code }}"
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - BASH LOGGING"
+        insertafter: EOF
+      when: not ansible_marker_profile.rc == 0
+      tags: bash_config
 
-    # --------------------------
-    # 4️⃣ Bash log fonksiyonu /root/.bashrc
-    # --------------------------
-    - name: Bash log fonksiyonunu /root/.bashrc dosyasına ekle, varsa atla
+    # /root/.bashrc için - Marker kontrolü
+    - name: /root/.bashrc'de Ansible marker'ını kontrol et
+      shell: |
+        grep -q "# ANSIBLE MANAGED BLOCK - BASH LOGGING" /root/.bashrc
+      register: ansible_marker_bashrc
+      ignore_errors: yes
+      changed_when: false
+      tags: bash_config
+
+    - name: /root/.bashrc'ye sadece Ansible marker'ı yoksa ekle
       blockinfile:
         path: /root/.bashrc
-        block: |
-          # Bash Log
-          PORT=$(who am i | awk '{print $5}' | tr -d '()')
-          function history_to_syslog {
-              local cmd=$(history 1 | awk '{$1=""; print substr($0,2)}')
-              local p_dir=$(pwd)
-              local LOG_NAME=$LOGNAME
-              if [ "$cmd" != "$old_command" ]; then
-                  logger -p local5.debug -- Bash SESSION=$$, from_remote_host=$PORT, USER=$LOG_NAME, PWD=$p_dir, CMD="$cmd"
-              fi
-              old_command=$cmd
-          }
-          trap history_to_syslog DEBUG
-        marker: "# ANSIBLE-BASH-RC-BEGIN"
+        block: "{{ bash_log_code }}"
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - BASH LOGGING"
+        insertafter: EOF
+      when: not ansible_marker_bashrc.rc == 0
+      tags: bash_config
 
-    # --------------------------
-    # 5️⃣ Audit plugin aktif et
-    # --------------------------
-    - name: Audit log pluginini aktif et
+    # 4. AUDIT SYSLOG KONFİGÜRASYONU - Lineinfile ile idempotent
+    - name: Mevcut audit syslog konfigürasyon dosyalarını bul
+      stat:
+        path: "{{ item }}"
+      register: audit_config_files
+      loop:
+        - /etc/audisp/plugins.d/syslog.conf
+        - /etc/audit/plugins.d/syslog.conf
+      tags: audit_config
+
+    - name: Audit syslog config dosyalarını düzenle (active = yes yap)
       lineinfile:
-        path: /etc/audisp/plugins.d/syslog.conf
-        regexp: '^active\s*='
+        path: "{{ item.item }}"
+        regexp: '^\s*active\s*=\s*(no|yes)'
         line: 'active = yes'
-        backrefs: yes
-      ignore_errors: yes
+        state: present
+      when: item.stat.exists
+      loop: "{{ audit_config_files.results }}"
+      tags: audit_config
 
-    # --------------------------
-    # 6️⃣ Rsyslog audit log bloğu
-    # --------------------------
-    - name: Rsyslog.conf içine audit log bloğu ekle, varsa atla
+    # 5. RSYSLOG KONFİGÜRASYONU - Marker kontrolü
+    # Rsyslog.conf için Ansible marker kontrolü
+    - name: Rsyslog.conf'da Ansible marker'ını kontrol et
+      shell: |
+        grep -q "# ANSIBLE MANAGED BLOCK - REMOTE LOGGING AND AUDITD" /etc/rsyslog.conf
+      register: ansible_marker_rsyslog
+      ignore_errors: yes
+      changed_when: false
+      tags: rsyslog_config
+
+    # Uzak log sunucusu ve audit konfigürasyonu
+    - name: Rsyslog.conf dosyasına Ansible marker'ı ile konfigürasyon ekle
       blockinfile:
         path: /etc/rsyslog.conf
         block: |
-          # BEGIN RSYSLOG QRADAR + AUDIT
           ############  RSYSLOG  QRADAR
-          {{ remote_syslog_ip }}
-
+          {{ remote_syslog_server }}
           ########################## FOR AUDITD
           # audit log
           $ModLoad imfile
           $InputFileName /var/log/audit/audit.log
-          $InputFileTag tag_audit_log_$HOSTNAME:
+          $InputFileTag tag_audit_log_.$hostname:
           $InputFileStateFile audit_log
           $InputFileSeverity info
           $InputFileFacility local6
           $InputRunFileMonitor
-          # END RSYSLOG QRADAR + AUDIT
-        marker: "# ANSIBLE-RSYSLOG-AUDIT-BEGIN"
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - REMOTE LOGGING AND AUDITD"
         insertafter: EOF
+      when: not ansible_marker_rsyslog.rc == 0
+      tags: rsyslog_config
 
-    # --------------------------
-    # 7️⃣ Bash log dosyası
-    # --------------------------
-    - name: Bash log dosyasını oluştur, varsa atla
+    # Bash log dosyası - idempotent
+    - name: Bash log dosyasını oluştur veya var olanı koru
       file:
-        path: "{{ bash_log_file }}"
+        path: /var/log/bash.log
         state: touch
         owner: root
         group: adm
         mode: '0640'
+      tags: bash_log_file
 
-    # --------------------------
-    # 8️⃣ Rsyslog bash log config
-    # --------------------------
-    - name: Rsyslog bash log config dosyasını oluştur, varsa atla
-      copy:
-        dest: /etc/rsyslog.d/bash.conf
-        content: |
+    # Rsyslog bash.conf dosyası - Ansible marker kontrolü
+    - name: Rsyslog bash.conf dosyasını kontrol et
+      stat:
+        path: /etc/rsyslog.d/bash.conf
+      register: bash_conf_exists
+      tags: rsyslog_config
+
+    - name: Bash.conf içeriğini tanımla
+      set_fact:
+        bash_conf_content: |
           # Bash log
-          local5.debug {{ bash_log_file }}
-        force: no
+          local5.debug           /var/log/bash.log
+          # ANSIBLE MANAGED - DO NOT EDIT MANUALLY
 
-    # --------------------------
-    # 9️⃣ 50-default.conf ekleme
-    # --------------------------
-    - name: 50-default.conf dosyasına eksik kuralları ekle
+    - name: Bash.conf dosyasına Ansible işaretiyle içerik ekle
       blockinfile:
-        path: /etc/rsyslog.d/50-default.conf
-        block: |
-          auth,authpriv.*                 /var/log/auth.log
-          *.*;auth,authpriv.none          -/var/log/syslog
-          cron.*                          /var/log/cron.log
-          local1.*                        /var/log/sudo.log
-          mail.err                         /var/log/mail.err
-          *.emerg                          :omusrmsg:*
-        marker: "# ANSIBLE-50-DEFAULT-CONF-BEGIN"
-        insertafter: EOF
+        path: /etc/rsyslog.d/bash.conf
+        block: "{{ bash_conf_content }}"
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - BASH LOG CONFIG"
+        create: yes
+        owner: root
+        group: root
+        mode: '0644'
+      when: not bash_conf_exists.stat.exists
+      tags: rsyslog_config
 
-    # --------------------------
-    # 🔟 Servisleri yeniden başlat
-    # --------------------------
-    - name: Rsyslog servisini yeniden başlat
+    # 6. 50-DEFAULT.CONF DÜZENLEMESİ - Lineinfile ile her satır için kontrol
+    - name: 50-default.conf için satır kontrol listesi
+      set_fact:
+        default_conf_lines:
+          - { regex: '^auth,authpriv\.\*\s+', line: 'auth,authpriv.*                 /var/log/auth.log' }
+          - { regex: '^\*\.\*;auth,authpriv\.none\s+', line: '*.*;auth,authpriv.none          -/var/log/syslog' }
+          - { regex: '^cron\.\*\s+', line: 'cron.*                          /var/log/cron.log' }
+          - { regex: '^local1\.\*\s+', line: 'local1.*                        /var/log/sudo.log' }
+          - { regex: '^mail\.err\s+', line: 'mail.err                        /var/log/mail.err' }
+          - { regex: '^\*\.emerg\s+', line: '*.emerg                         :omusrmsg:*' }
+
+    - name: 50-default.conf dosyasına eksik satırları ekle
+      lineinfile:
+        path: /etc/rsyslog.d/50-default.conf
+        regexp: "{{ item.regex }}"
+        line: "{{ item.line }}"
+        state: present
+      loop: "{{ default_conf_lines }}"
+      tags: rsyslog_default_conf
+
+    # 7. SERVIS RESTART - Sadece değişiklik olduysa
+    # Değişiklik kontrolü için handler kullanımı
+    - name: Config dosyalarını izle
+      stat:
+        path: "{{ item }}"
+      loop:
+        - /etc/profile
+        - /root/.bashrc
+        - /etc/rsyslog.conf
+        - /etc/rsyslog.d/bash.conf
+        - /etc/rsyslog.d/50-default.conf
+        - /etc/audisp/plugins.d/syslog.conf
+        - /etc/audit/plugins.d/syslog.conf
+      register: config_files_stat
+      changed_when: false
+      tags: restart_services
+
+    - name: Config dosya değişiklik zamanlarını kontrol et
+      set_fact:
+        latest_mtime: "{{ config_files_stat.results | selectattr('stat.exists') | map(attribute='stat.mtime') | max | default(0) }}"
+      tags: restart_services
+
+    - name: Değişiklik varsa rsyslog'u restart et
       systemd:
         name: rsyslog
         state: restarted
+      when: latest_mtime | float > (ansible_date_time.epoch | int - 300)
+      tags: restart_services
 
-    - name: Auditd servisini yeniden başlat
+    - name: Değişiklik varsa auditd'yi restart et
       systemd:
         name: auditd
         state: restarted
+      when: latest_mtime | float > (ansible_date_time.epoch | int - 300)
+      tags: restart_services
+
+    # 8. SON KONTROLLER - DÜZELTİLMİŞ
+    - name: Servis durumlarını kontrol et
+      systemd:
+        name: "{{ item }}"
+      loop:
+        - rsyslog
+        - auditd
+      register: service_status
+      tags: verification
+
+    - name: Servis durumlarını göster
+      debug:
+        msg: "{{ item.item }} servisi: {{ 'Çalışıyor' if item.status.ActiveState == 'active' else 'Çalışmıyor' }}"
+      loop: "{{ service_status.results }}"
+      tags: verification
+
+    - name: Konfigürasyon dosyalarının durumunu göster
+      debug:
+        msg: |
+          Konfigürasyon Durumu:
+            /etc/profile: {{ ansible_marker_profile.rc == 0 | ternary('Ansible ile yönetiliyor ✓', 'Manuel veya yok') }}
+            /root/.bashrc: {{ ansible_marker_bashrc.rc == 0 | ternary('Ansible ile yönetiliyor ✓', 'Manuel veya yok') }}
+            Rsyslog.conf: {{ ansible_marker_rsyslog.rc == 0 | ternary('Ansible ile yönetiliyor ✓', 'Manuel veya yok') }}
+      tags: verification
+      
