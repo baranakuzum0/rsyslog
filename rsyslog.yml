@@ -112,8 +112,10 @@
         regexp: '^active'
         line: 'active = yes'
         state: present
-       loop: "{{ audit_syslog_conf_paths }}"
-       ignore_errors: yes
+      loop: "{{ audit_syslog_conf_paths }}"
+      when: item is file
+
+                                                   
               
 
     ############################################################
