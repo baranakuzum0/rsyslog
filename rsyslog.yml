@@ -115,11 +115,8 @@
       loop: "{{ audit_syslog_conf_paths }}"
       when: item is file
 
-                                                   
-              
-
     ############################################################
-    # 4. Rsyslog.conf Sonuna QRADAR + Audit Input Ekleme
+    # 4. Rsyslog.conf Sonuna QRADAR + Audit Input Ekleme (Idempotent)
     ############################################################
     - name: Rsyslog remote + audit log ekleme
       blockinfile:
