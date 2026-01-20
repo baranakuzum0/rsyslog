@@ -85,9 +85,26 @@
       ignore_errors: yes
 
     # --------------------------
-    # 5️⃣ Rsyslog.conf audit log ekle
+    # 5️⃣ Rsyslog.conf audit log temizle eski bloklar
     # --------------------------
-    - name: Rsyslog.conf üzerine audit log ayarını ekle (varsa atla)
+    - name: Eski RSYSLOG QRADAR + AUDIT bloklarını temizle
+      replace:
+        path: /etc/rsyslog.conf
+        regexp: '^(# BEGIN RSYSLOG QRADAR \+ AUDIT.*?# END RSYSLOG QRADAR \+ AUDIT)'
+        replace: ''
+        flags: 'ms'
+
+    - name: Eski ANSIBLE-RSYSLOG-AUDIT-BEGIN bloklarını temizle
+      replace:
+        path: /etc/rsyslog.conf
+        regexp: '^(# ANSIBLE-RSYSLOG-AUDIT-BEGIN.*?# ANSIBLE-RSYSLOG-AUDIT-BEGIN)'
+        replace: ''
+        flags: 'ms'
+
+    # --------------------------
+    # 6️⃣ Rsyslog.conf audit log ekle tek blok
+    # --------------------------
+    - name: Rsyslog.conf üzerine tek audit log bloğunu ekle
       blockinfile:
         path: /etc/rsyslog.conf
         block: |
@@ -109,7 +126,7 @@
         insertafter: EOF
 
     # --------------------------
-    # 6️⃣ Bash log dosyası
+    # 7️⃣ Bash log dosyası
     # --------------------------
     - name: Bash log dosyasını oluştur (varsa atla)
       file:
@@ -120,7 +137,7 @@
         mode: '0640'
 
     # --------------------------
-    # 7️⃣ Rsyslog bash log config
+    # 8️⃣ Rsyslog bash log config
     # --------------------------
     - name: Rsyslog bash log config dosyasını oluştur (varsa atla)
       copy:
@@ -131,7 +148,7 @@
         force: no
 
     # --------------------------
-    # 8️⃣ 50-default.conf güncelle
+    # 9️⃣ 50-default.conf güncelle
     # --------------------------
     - name: 50-default.conf dosyasına kuralları ekle sadece eksikse
       blockinfile:
@@ -147,14 +164,14 @@
         insertafter: EOF
 
     # --------------------------
-    # 9️⃣ Servisleri yeniden başlat
+    # 🔟 Servisleri yeniden başlat
     # --------------------------
-    - name: Rsyslog servisini yeniden başlat (varsa değişiklik yoksa atla)
+    - name: Rsyslog servisini yeniden başlat
       systemd:
         name: rsyslog
         state: restarted
 
-    - name: Auditd servisini yeniden başlat (varsa değişiklik yoksa atla)
+    - name: Auditd servisini yeniden başlat
       systemd:
         name: auditd
         state: restarted
