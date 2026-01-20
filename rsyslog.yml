@@ -8,18 +8,20 @@
 
   tasks:
 
-    - name: Güncellemeleri al
-      apt:
-        update_cache: yes
-        cache_valid_time: 3600
-
-    - name: Auditd ve Audispd-plugins kurulumu
+    # --------------------------
+    # 1️⃣ Paket Kurulumu
+    # --------------------------
+    - name: Auditd ve Audispd-plugins kurulumu (varsa atla)
       apt:
         name:
           - auditd
           - audispd-plugins
         state: present
+        update_cache: yes
 
+    # --------------------------
+    # 2️⃣ Servisler
+    # --------------------------
     - name: Rsyslog servisinin aktif ve çalışır olmasını sağla
       systemd:
         name: rsyslog
@@ -32,7 +34,10 @@
         enabled: yes
         state: started
 
-    - name: Bash log fonksiyonunu /etc/profile dosyasına ekle
+    # --------------------------
+    # 3️⃣ Bash log fonksiyonu
+    # --------------------------
+    - name: Bash log fonksiyonunu /etc/profile dosyasına ekle (varsa atla)
       blockinfile:
         path: /etc/profile
         block: |
@@ -50,7 +55,7 @@
           trap history_to_syslog DEBUG
         marker: "# ANSIBLE-BASH-PROFILE-BEGIN"
 
-    - name: Bash log fonksiyonunu /root/.bashrc dosyasına ekle
+    - name: Bash log fonksiyonunu /root/.bashrc dosyasına ekle (varsa atla)
       blockinfile:
         path: /root/.bashrc
         block: |
@@ -68,7 +73,10 @@
           trap history_to_syslog DEBUG
         marker: "# ANSIBLE-BASH-RC-BEGIN"
 
-    - name: Audit log pluginini aktif et
+    # --------------------------
+    # 4️⃣ Audit plugin aktif et
+    # --------------------------
+    - name: Audit log pluginini aktif et (varsa atla)
       lineinfile:
         path: /etc/audisp/plugins.d/syslog.conf
         regexp: '^active\s*='
@@ -76,7 +84,10 @@
         backrefs: yes
       ignore_errors: yes
 
-    - name: Rsyslog.conf üzerine audit log ayarını ekle
+    # --------------------------
+    # 5️⃣ Rsyslog.conf audit log ekle
+    # --------------------------
+    - name: Rsyslog.conf üzerine audit log ayarını ekle (varsa atla)
       blockinfile:
         path: /etc/rsyslog.conf
         block: |
@@ -93,7 +104,10 @@
         marker: "# ANSIBLE-RSYSLOG-AUDIT-BEGIN"
         insertafter: EOF
 
-    - name: Bash log dosyasını oluştur
+    # --------------------------
+    # 6️⃣ Bash log dosyası
+    # --------------------------
+    - name: Bash log dosyasını oluştur (varsa atla)
       file:
         path: "{{ bash_log_file }}"
         state: touch
@@ -101,14 +115,21 @@
         group: adm
         mode: '0640'
 
-    - name: Rsyslog bash log config dosyasını oluştur
+    # --------------------------
+    # 7️⃣ Rsyslog bash log config
+    # --------------------------
+    - name: Rsyslog bash log config dosyasını oluştur (varsa atla)
       copy:
         dest: /etc/rsyslog.d/bash.conf
         content: |
           # Bash log
           local5.debug {{ bash_log_file }}
+        force: no
 
-    - name: 50-default.conf dosyasına kuralları ekle (varsa eklemez)
+    # --------------------------
+    # 8️⃣ 50-default.conf güncelle
+    # --------------------------
+    - name: 50-default.conf dosyasına kuralları ekle (varsa atla)
       blockinfile:
         path: /etc/rsyslog.d/50-default.conf
         block: |
@@ -121,12 +142,15 @@
         marker: "# ANSIBLE-50-DEFAULT-CONF-BEGIN"
         insertafter: EOF
 
-    - name: Rsyslog servisini yeniden başlat
+    # --------------------------
+    # 9️⃣ Servisleri yeniden başlat
+    # --------------------------
+    - name: Rsyslog servisini yeniden başlat (varsa değişiklik yoksa atla)
       systemd:
         name: rsyslog
         state: restarted
 
-    - name: Auditd servisini yeniden başlat
+    - name: Auditd servisini yeniden başlat (varsa değişiklik yoksa atla)
       systemd:
         name: auditd
         state: restarted
