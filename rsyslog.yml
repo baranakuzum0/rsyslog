@@ -115,11 +115,21 @@
       loop: "{{ audit_syslog_conf_paths }}"
       ignore_errors: yes
 
-    - name: Rsyslog audit log input
+    ############################################################
+    # 4. Rsyslog.conf Sonuna QRADAR + Audit Input Ekleme
+    ############################################################
+    - name: Rsyslog remote + audit log ekleme
       blockinfile:
         path: /etc/rsyslog.conf
-        marker: "# {mark} AUDIT LOG INPUT"
+        marker: "# {mark} RSYSLOG QRADAR + AUDIT"
         block: |
+          ############  RSYSLOG  QRADAR
+          {% for host in remote_rsyslog_hosts %}
+          {{ host }}
+          {% endfor %}
+
+          ########################## FOR AUDITD
+          # audit log
           $ModLoad imfile
           $InputFileName /var/log/audit/audit.log
           $InputFileTag tag_audit_log_.$hostname:
@@ -129,7 +139,7 @@
           $InputRunFileMonitor
 
     ############################################################
-    # 4. 50-default.conf Düzenleme (Mevcut Dosyayı Bozmadan)
+    # 5. 50-default.conf Düzenleme (Mevcut Dosyayı Bozmadan)
     ############################################################
     - name: 50-default.conf - cron satırını aktif et
       lineinfile:
@@ -171,21 +181,9 @@
     - name: 50-default.conf - *.emerg satırını kontrol et
       lineinfile:
         path: /etc/rsyslog.d/50-default.conf
-        regexp: '^\*\.\emerg'
+        regexp: '^\*\.\*emerg'
         line: '*.emerg                         :omusrmsg:*'
         state: present
-
-    ############################################################
-    # 5. Rsyslog Remote Forwarding
-    ############################################################
-    - name: Rsyslog remote forwarding
-      blockinfile:
-        path: /etc/rsyslog.conf
-        marker: "# {mark} REMOTE RSYSLOG FORWARDING"
-        block: |
-          {% for host in remote_rsyslog_hosts %}
-          local5.*,local6.* @{{ host }}:514
-          {% endfor %}
 
   handlers:
     - name: restart rsyslog
