@@ -3,11 +3,10 @@
   hosts: all
   become: yes
   vars:
-    # Değiştirilecek değişkenler
     remote_syslog_server: "192.168.121.21"
     
   tasks:
-    # 1. Auditd ve rsyslog kurulumu
+    # 1. Paket kurulumları
     - name: Güncelleme ve paket kurulumu
       apt:
         name: "{{ item }}"
@@ -53,7 +52,7 @@
           }
           trap history_to_syslog DEBUG || EXIT
 
-    # /etc/profile dosyasına ekleme (daha önce eklenmediyse)
+    # /etc/profile dosyasına Ansible marker'ı ile blok ekle
     - name: /etc/profile dosyasına bash loglama kodunu ekle
       blockinfile:
         path: /etc/profile
@@ -62,7 +61,7 @@
         insertafter: EOF
       tags: bash_config
 
-    # /root/.bashrc dosyasına ekleme (daha önce eklenmediyse)
+    # /root/.bashrc dosyasına Ansible marker'ı ile blok ekle
     - name: /root/.bashrc dosyasına bash loglama kodunu ekle
       blockinfile:
         path: /root/.bashrc
@@ -71,9 +70,9 @@
         insertafter: EOF
       tags: bash_config
 
-    # 4. Audit loglarının rsyslog üzerine aktarılması
-    # İlk olarak hangi config dosyasının olduğunu kontrol et
-    - name: Audit syslog config dosyasını kontrol et
+    # 4. Audit syslog konfigürasyonu
+    # Hangi dosyanın olduğunu bul ve düzenle
+    - name: Audit syslog config dosyasını bul
       stat:
         path: "{{ item }}"
       register: audit_config_files
@@ -93,7 +92,7 @@
       tags: audit_config
 
     # 5. Rsyslog konfigürasyonu
-    # Rsyslog.conf dosyasına uzak sunucu ve audit log konfigürasyonu ekleme
+    # Rsyslog.conf dosyasına Ansible marker'ı ile blok ekle
     - name: Rsyslog.conf dosyasına uzak sunucu ve audit log konfigürasyonu ekle
       blockinfile:
         path: /etc/rsyslog.conf
@@ -113,7 +112,7 @@
         insertafter: EOF
       tags: rsyslog_config
 
-    # Bash log dosyasını oluşturma
+    # Bash log dosyasını oluştur
     - name: Bash log dosyasını oluştur
       file:
         path: /var/log/bash.log
@@ -123,7 +122,7 @@
         mode: '0640'
       tags: bash_log_file
 
-    # Rsyslog bash config dosyasını oluşturma
+    # Rsyslog bash config dosyasını oluştur (marker kullanmıyoruz, çünkü küçük bir dosya)
     - name: Rsyslog bash config dosyasını oluştur
       copy:
         dest: /etc/rsyslog.d/bash.conf
@@ -135,41 +134,34 @@
         mode: '0644'
       tags: rsyslog_config
 
-    # 6. 50-default.conf dosyasının düzenlenmesi
-    # Sadece eksik satırları ekle
-    - name: 50-default.conf dosyası için kontrol listesi
-      set_fact:
-        default_conf_lines:
-          - { regex: '^auth,authpriv\.\*\s*', line: 'auth,authpriv.*                 /var/log/auth.log' }
-          - { regex: '^\*\.\*;auth,authpriv\.none\s*', line: '*.*;auth,authpriv.none          -/var/log/syslog' }
-          - { regex: '^cron\.\*\s*', line: 'cron.*                          /var/log/cron.log' }
-          - { regex: '^local1\.\*\s*', line: 'local1.*                        /var/log/sudo.log' }
-          - { regex: '^mail\.err\s*', line: 'mail.err                        /var/log/mail.err' }
-          - { regex: '^\*\.emerg\s*', line: '*.emerg                         :omusrmsg:*' }
-
-    - name: 50-default.conf dosyasına eksik satırları ekle
+    # 6. 50-default.conf dosyasına gerekli satırları ekle
+    # Her satır için lineinfile kullanarak, satır yoksa ekleyeceğiz
+    - name: 50-default.conf dosyasına gerekli satırları ekle
       lineinfile:
         path: /etc/rsyslog.d/50-default.conf
         regexp: "{{ item.regex }}"
         line: "{{ item.line }}"
         state: present
-      loop: "{{ default_conf_lines }}"
+      with_items:
+        - { regex: '^auth,authpriv\.\*\s*', line: 'auth,authpriv.*                 /var/log/auth.log' }
+        - { regex: '^\*\.\*;auth,authpriv\.none\s*', line: '*.*;auth,authpriv.none          -/var/log/syslog' }
+        - { regex: '^cron\.\*\s*', line: 'cron.*                          /var/log/cron.log' }
+        - { regex: '^local1\.\*\s*', line: 'local1.*                        /var/log/sudo.log' }
+        - { regex: '^mail\.err\s*', line: 'mail.err                        /var/log/mail.err' }
+        - { regex: '^\*\.emerg\s*', line: '*.emerg                         :omusrmsg:*' }
       tags: rsyslog_default_conf
 
-    # 7. Servisleri restart et (sadece config dosyaları değiştiyse)
-    - name: Rsyslog servisini restart et
+    # 7. Servisleri restart et
+    - name: Servisleri restart et
       systemd:
-        name: rsyslog
+        name: "{{ item }}"
         state: restarted
+      loop:
+        - rsyslog
+        - auditd
       tags: restart_services
 
-    - name: Auditd servisini restart et
-      systemd:
-        name: auditd
-        state: restarted
-      tags: restart_services
-
-    # Son kontroller
+    # 8. Servis durumlarını kontrol et
     - name: Servis durumlarını kontrol et
       systemd:
         name: "{{ item }}"
