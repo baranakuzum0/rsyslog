@@ -91,9 +91,12 @@
       blockinfile:
         path: /etc/rsyslog.conf
         block: |
-          ############ RSYSLOG -> QRADAR ############
+          # BEGIN RSYSLOG QRADAR + AUDIT
+          ############  RSYSLOG  QRADAR
           {{ remote_syslog_ip }}
-          # Audit log için
+
+          ########################## FOR AUDITD
+          # audit log
           $ModLoad imfile
           $InputFileName /var/log/audit/audit.log
           $InputFileTag tag_audit_log_$HOSTNAME:
@@ -101,6 +104,7 @@
           $InputFileSeverity info
           $InputFileFacility local6
           $InputRunFileMonitor
+          # END RSYSLOG QRADAR + AUDIT
         marker: "# ANSIBLE-RSYSLOG-AUDIT-BEGIN"
         insertafter: EOF
 
@@ -129,7 +133,7 @@
     # --------------------------
     # 8️⃣ 50-default.conf güncelle
     # --------------------------
-    - name: 50-default.conf dosyasına kuralları ekle (varsa atla)
+    - name: 50-default.conf dosyasına kuralları ekle sadece eksikse
       blockinfile:
         path: /etc/rsyslog.d/50-default.conf
         block: |
