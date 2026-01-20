@@ -139,7 +139,7 @@
       marker: "# {mark} ANSIBLE AUDIT FORWARD"
       block: |
         ############ RSYSLOG QRADAR
-       192.168.121.21
+         192.168.121.21
 
         ########################## FOR AUDITD
         $ModLoad imfile
