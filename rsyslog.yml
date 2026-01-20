@@ -106,14 +106,15 @@
     ############################################################
     # 3. Audit Loglarının Rsyslog Üzerine Aktarılması
     ############################################################
-    - name: Auditd syslog plugin aktif et
+    - name: Auditd syslog plugin aktif et (sadece gerekirse)
       lineinfile:
         path: "{{ item }}"
         regexp: '^active'
         line: 'active = yes'
         state: present
-      loop: "{{ audit_syslog_conf_paths }}"
-      ignore_errors: yes
+       loop: "{{ audit_syslog_conf_paths }}"
+       ignore_errors: yes
+              
 
     ############################################################
     # 4. Rsyslog.conf Sonuna QRADAR + Audit Input Ekleme
