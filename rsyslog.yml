@@ -2,6 +2,7 @@
 - name: RSYSLOG + Auditd + Bash Log Kurulumu (Ubuntu/Debian)
   hosts: all
   become: yes
+
   vars:
     remote_syslog_server: "192.168.121.21"
 
@@ -10,6 +11,7 @@
     - name: apt cache güncelle
       apt:
         update_cache: yes
+        cache_valid_time: 3600
 
     - name: auditd ve rsyslog kur
       apt:
@@ -18,8 +20,8 @@
           - rsyslog
         state: present
 
-    # 2. Servisleri enable + start
-    - name: auditd ve rsyslog aktif et
+    # 2. Servisleri aktif et
+    - name: auditd ve rsyslog enable + start
       systemd:
         name: "{{ item }}"
         enabled: yes
@@ -87,10 +89,8 @@
         path: /etc/rsyslog.d/90-audit-remote.conf
         create: yes
         block: |
-          # Remote syslog
           *.* @@{{ remote_syslog_server }}
 
-          # Audit log
           $ModLoad imfile
           $InputFileName /var/log/audit/audit.log
           $InputFileTag audit_log:
@@ -100,8 +100,8 @@
           $InputRunFileMonitor
         marker: "# {mark} ANSIBLE AUDIT REMOTE"
 
-    # 6. Bash log dosyası
-    - name: bash log dosyasını oluştur
+    # 6. Bash log dosyası (logları ASLA silmez)
+    - name: bash log dosyasını oluştur (yoksa)
       file:
         path: /var/log/bash.log
         state: touch
@@ -118,7 +118,7 @@
         marker: "# {mark} ANSIBLE BASH RSYSLOG"
 
     # 7. 50-default.conf ayarları
-    - name: 50-default.conf kurallarını ekle
+    - name: 50-default.conf rsyslog kuralları
       lineinfile:
         path: /etc/rsyslog.d/50-default.conf
         regexp: "{{ item.regex }}"
