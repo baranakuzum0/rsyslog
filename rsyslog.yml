@@ -7,7 +7,7 @@
     remote_syslog_server: "192.168.121.21"
 
   tasks:
-    # 1. Paket kurulumu
+    # 1. Auditd kurulumu
     - name: apt cache güncelle
       apt:
         update_cache: yes
@@ -83,24 +83,26 @@
       when: item.stat.exists
       loop: "{{ audit_syslog_files.results }}"
 
-    # 5. Rsyslog audit + remote config
-    - name: rsyslog audit ve remote log config ekle
+    # 5. rsyslog.conf içine audit imfile config EKLE
+    - name: rsyslog.conf audit config ekle
       blockinfile:
-        path: /etc/rsyslog.d/90-audit-remote.conf
-        create: yes
+        path: /etc/rsyslog.conf
         block: |
-          *.* @@{{ remote_syslog_server }}
-
+          ############  RSYSLOG  QRADAR
+          {{ remote_syslog_server }}
+          ########################## FOR AUDITD
+          # audit log
           $ModLoad imfile
           $InputFileName /var/log/audit/audit.log
-          $InputFileTag audit_log:
+          $InputFileTag tag_audit_log_.$hostname:
           $InputFileStateFile audit_log
           $InputFileSeverity info
           $InputFileFacility local6
           $InputRunFileMonitor
-        marker: "# {mark} ANSIBLE AUDIT REMOTE"
+        marker: "# {mark} ANSIBLE AUDITD"
+        insertafter: EOF
 
-    # 6. Bash log dosyası (logları ASLA silmez)
+    # 6. Bash log dosyası (varsa DOKUNMAZ)
     - name: bash log dosyasını oluştur (yoksa)
       file:
         path: /var/log/bash.log
@@ -114,10 +116,11 @@
         path: /etc/rsyslog.d/bash.conf
         create: yes
         block: |
-          local5.debug    /var/log/bash.log
+          # Bash log
+          local5.debug           /var/log/bash.log
         marker: "# {mark} ANSIBLE BASH RSYSLOG"
 
-    # 7. 50-default.conf ayarları
+    # 7. 50-default.conf kuralları
     - name: 50-default.conf rsyslog kuralları
       lineinfile:
         path: /etc/rsyslog.d/50-default.conf
