@@ -7,7 +7,7 @@
     remote_syslog_server: "192.168.121.21"
 
   tasks:
-    # 1. Auditd kurulumu
+    # 1. Paket kurulumu
     - name: apt cache güncelle
       apt:
         update_cache: yes
@@ -83,8 +83,13 @@
       when: item.stat.exists
       loop: "{{ audit_syslog_files.results }}"
 
-    # 5. rsyslog.conf içine audit imfile config EKLE
-    - name: rsyslog.conf audit config ekle
+    # 5. Rsyslog audit + remote config
+    - name: rsyslog.conf içinde audit ve remote log kontrol
+      shell: grep -q '\$InputFileName /var/log/audit/audit.log' /etc/rsyslog.conf
+      register: audit_present
+      ignore_errors: yes
+
+    - name: rsyslog.conf içine audit ve remote log ekle
       blockinfile:
         path: /etc/rsyslog.conf
         block: |
@@ -99,10 +104,15 @@
           $InputFileSeverity info
           $InputFileFacility local6
           $InputRunFileMonitor
-        marker: "# {mark} ANSIBLE AUDITD"
-        insertafter: EOF
+        marker: "# {mark} ANSIBLE AUDIT REMOTE"
+      when: audit_present.rc != 0
 
-    # 6. Bash log dosyası (varsa DOKUNMAZ)
+    # 6. Bash log dosyası (logları ASLA silmez)
+    - name: bash log dosyasını kontrol et
+      stat:
+        path: /var/log/bash.log
+      register: bash_log_stat
+
     - name: bash log dosyasını oluştur (yoksa)
       file:
         path: /var/log/bash.log
@@ -110,6 +120,7 @@
         owner: root
         group: adm
         mode: '0640'
+      when: not bash_log_stat.stat.exists
 
     - name: bash rsyslog config ekle
       blockinfile:
@@ -117,10 +128,10 @@
         create: yes
         block: |
           # Bash log
-          local5.debug           /var/log/bash.log
+          local5.debug    /var/log/bash.log
         marker: "# {mark} ANSIBLE BASH RSYSLOG"
 
-    # 7. 50-default.conf kuralları
+    # 7. 50-default.conf ayarları
     - name: 50-default.conf rsyslog kuralları
       lineinfile:
         path: /etc/rsyslog.d/50-default.conf
