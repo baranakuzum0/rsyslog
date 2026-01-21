@@ -1,191 +1,141 @@
 ---
-- name: RSYSLOG + Auditd + Bash Log Kurulumu
+- name: RSYSLOG + Auditd + Bash Log Kurulumu (Ubuntu/Debian)
   hosts: all
   become: yes
   vars:
     remote_syslog_server: "192.168.121.21"
-    
+
   tasks:
     # 1. Paket kurulumu
-    - name: Güncelleme ve paket kurulumu
+    - name: apt cache güncelle
       apt:
-        name: "{{ item }}"
-        state: present
         update_cache: yes
-      loop:
-        - auditd
-        - rsyslog
-      tags: installation
 
-    # 2. Servisleri etkinleştirme
-    - name: Servisleri etkinleştir ve başlat
+    - name: auditd ve rsyslog kur
+      apt:
+        name:
+          - auditd
+          - rsyslog
+        state: present
+
+    # 2. Servisleri enable + start
+    - name: auditd ve rsyslog aktif et
       systemd:
         name: "{{ item }}"
         enabled: yes
         state: started
-        daemon_reload: yes
       loop:
-        - rsyslog
         - auditd
-      tags: services
+        - rsyslog
 
-    # 3. BASH LOGLAMA - Direkt blockinfile ile (grep'e gerek yok)
-    - name: Bash loglama kodlarını tanımla
+    # 3. Bash log kodu
+    - name: Bash log kodunu tanımla
       set_fact:
         bash_log_code: |
           # Bash Log
           PORT=`who am i | awk '{ print $5 }' | sed 's/(//g' | sed 's/)//g'`
           logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT
-          function history_to_syslog
-          {
-          declare cmd
-          declare p_dir
-          declare LOG_NAME
-          cmd=$(history 1)
-          cmd=$(echo $cmd |awk '{print substr($0,length($1)+2)}')
-          p_dir=$(pwd)
-          LOG_NAME=$(echo $LOGNAME)
-          if [ "$cmd" != "$old_command" ]; then
-          logger -p local5.debug -- Bash SESSION = $$, from_remote_host = $PORT, USER = $LOG_NAME, PWD = $p_dir, CMD = "${cmd}"
-          fi
-          old_command=$cmd
+          function history_to_syslog {
+            declare cmd
+            declare p_dir
+            declare LOG_NAME
+            cmd=$(history 1)
+            cmd=$(echo $cmd |awk '{print substr($0,length($1)+2)}')
+            p_dir=$(pwd)
+            LOG_NAME=$(echo $LOGNAME)
+            if [ "$cmd" != "$old_command" ]; then
+              logger -p local5.debug -- Bash SESSION=$$, USER=$LOG_NAME, PWD=$p_dir, CMD="${cmd}"
+            fi
+            old_command=$cmd
           }
           trap history_to_syslog DEBUG || EXIT
 
-    # /etc/profile için - direkt blockinfile (marker otomatik kontrol edilir)
-    - name: /etc/profile dosyasına bash loglama kodunu ekle
+    - name: /etc/profile içine bash log ekle
       blockinfile:
         path: /etc/profile
         block: "{{ bash_log_code }}"
-        marker: "# {mark} ANSIBLE MANAGED BLOCK - BASH LOGGING"
+        marker: "# {mark} ANSIBLE BASH LOG"
         insertafter: EOF
-      tags: bash_config
 
-    # /root/.bashrc için
-    - name: /root/.bashrc dosyasına bash loglama kodunu ekle
+    - name: /root/.bashrc içine bash log ekle
       blockinfile:
         path: /root/.bashrc
         block: "{{ bash_log_code }}"
-        marker: "# {mark} ANSIBLE MANAGED BLOCK - BASH LOGGING"
+        marker: "# {mark} ANSIBLE BASH LOG"
         insertafter: EOF
-      tags: bash_config
 
-    # 4. AUDIT SYSLOG KONFİGÜRASYONU
-    - name: Mevcut audit syslog konfigürasyon dosyalarını bul
+    # 4. Audit syslog aktif et
+    - name: audit syslog config dosyalarını kontrol et
       stat:
         path: "{{ item }}"
-      register: audit_config_files
       loop:
         - /etc/audisp/plugins.d/syslog.conf
         - /etc/audit/plugins.d/syslog.conf
-      tags: audit_config
+      register: audit_syslog_files
 
-    - name: Audit syslog config dosyalarını düzenle
+    - name: active = yes yap
       lineinfile:
         path: "{{ item.item }}"
-        regexp: '^\s*active\s*=\s*(no|yes)'
+        regexp: '^active\s*='
         line: 'active = yes'
-        state: present
       when: item.stat.exists
-      loop: "{{ audit_config_files.results }}"
-      tags: audit_config
+      loop: "{{ audit_syslog_files.results }}"
 
-    # 5. RSYSLOG KONFİGÜRASYONU
-    # Uzak log sunucusu ve audit konfigürasyonu
-    - name: Rsyslog.conf dosyasına uzak log ve audit konfigürasyonu ekle
+    # 5. Rsyslog audit + remote config
+    - name: rsyslog audit ve remote log config ekle
       blockinfile:
-        path: /etc/rsyslog.conf
+        path: /etc/rsyslog.d/90-audit-remote.conf
+        create: yes
         block: |
-          ############  RSYSLOG  QRADAR
-          {{ remote_syslog_server }}
-          ########################## FOR AUDITD
-          # audit log
+          # Remote syslog
+          *.* @@{{ remote_syslog_server }}
+
+          # Audit log
           $ModLoad imfile
           $InputFileName /var/log/audit/audit.log
-          $InputFileTag tag_audit_log_.$hostname:
+          $InputFileTag audit_log:
           $InputFileStateFile audit_log
           $InputFileSeverity info
           $InputFileFacility local6
           $InputRunFileMonitor
-        marker: "# {mark} ANSIBLE MANAGED BLOCK - REMOTE LOGGING AND AUDITD"
-        insertafter: EOF
-      tags: rsyslog_config
+        marker: "# {mark} ANSIBLE AUDIT REMOTE"
 
-    # Bash log dosyası
-    - name: Bash log dosyasını oluştur
+    # 6. Bash log dosyası
+    - name: bash log dosyasını oluştur
       file:
         path: /var/log/bash.log
         state: touch
         owner: root
         group: adm
         mode: '0640'
-      tags: bash_log_file
 
-    # Rsyslog bash.conf dosyası
-    - name: Bash.conf dosyasına bash log konfigürasyonu ekle
+    - name: bash rsyslog config ekle
       blockinfile:
         path: /etc/rsyslog.d/bash.conf
-        block: |
-          # Bash log
-          local5.debug           /var/log/bash.log
-        marker: "# {mark} ANSIBLE MANAGED BLOCK - BASH LOG CONFIG"
         create: yes
-        owner: root
-        group: root
-        mode: '0644'
-      tags: rsyslog_config
+        block: |
+          local5.debug    /var/log/bash.log
+        marker: "# {mark} ANSIBLE BASH RSYSLOG"
 
-    # 6. 50-DEFAULT.CONF DÜZENLEMESİ
-    - name: 50-default.conf dosyasına gerekli satırları ekle
+    # 7. 50-default.conf ayarları
+    - name: 50-default.conf kurallarını ekle
       lineinfile:
         path: /etc/rsyslog.d/50-default.conf
         regexp: "{{ item.regex }}"
         line: "{{ item.line }}"
-        state: present
       loop:
-        - { regex: '^auth,authpriv\.\*\s+', line: 'auth,authpriv.*                 /var/log/auth.log' }
-        - { regex: '^\*\.\*;auth,authpriv\.none\s+', line: '*.*;auth,authpriv.none          -/var/log/syslog' }
-        - { regex: '^cron\.\*\s+', line: 'cron.*                          /var/log/cron.log' }
-        - { regex: '^local1\.\*\s+', line: 'local1.*                        /var/log/sudo.log' }
-        - { regex: '^mail\.err\s+', line: 'mail.err                        /var/log/mail.err' }
-        - { regex: '^\*\.emerg\s+', line: '*.emerg                         :omusrmsg:*' }
-      tags: rsyslog_default_conf
+        - { regex: '^auth,authpriv', line: 'auth,authpriv.*                 /var/log/auth.log' }
+        - { regex: '^\*\.\*;auth,authpriv\.none', line: '*.*;auth,authpriv.none          -/var/log/syslog' }
+        - { regex: '^cron\.\*', line: 'cron.*                          /var/log/cron.log' }
+        - { regex: '^local1\.\*', line: 'local1.*                        /var/log/sudo.log' }
+        - { regex: '^mail\.err', line: 'mail.err                        /var/log/mail.err' }
+        - { regex: '^\*\.emerg', line: '*.emerg                         :omusrmsg:*' }
 
-    # 7. SERVIS RESTART - Her zaman restart et (güvenli olması için)
-    - name: Servisleri restart et
+    # 8. Servis restart
+    - name: rsyslog ve auditd restart
       systemd:
         name: "{{ item }}"
         state: restarted
       loop:
         - rsyslog
         - auditd
-      tags: restart_services
-
-    # 8. SON KONTROLLER
-    - name: Servis durumlarını kontrol et
-      systemd:
-        name: "{{ item }}"
-      loop:
-        - rsyslog
-        - auditd
-      register: service_status
-      tags: verification
-
-    - name: Kurulum tamamlandı
-      debug:
-        msg: |
-          RSYSLOG + Auditd + Bash Log kurulumu tamamlandı!
-          
-          Yapılan işlemler:
-          1. auditd ve rsyslog kuruldu
-          2. Bash komut loglama eklendi (/etc/profile ve /root/.bashrc)
-          3. Audit logları rsyslog'a yönlendirildi
-          4. Rsyslog konfigürasyonu yapıldı
-          5. Log dosyaları oluşturuldu
-          6. Servisler restart edildi
-          
-          Kontrol için:
-          - Sistem logları: /var/log/syslog
-          - Bash logları: /var/log/bash.log  
-          - Audit logları: /var/log/audit/audit.log
-      tags: verification
