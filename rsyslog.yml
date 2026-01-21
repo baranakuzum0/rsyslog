@@ -126,5 +126,3 @@
     systemd:
       name: auditd
       state: restarted
-
-bu playbook bak bakalım
