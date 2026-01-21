@@ -1,144 +1,130 @@
 ---
-- name: RSYSLOG + Auditd + Bash Log Kurulumu (Ubuntu/Debian)
+- name: RSYSLOG + Auditd + Bash Log Kurulumu
   hosts: all
-  become: yes
-
-  vars:
-    remote_syslog_server: "192.168.121.21"
+  become: true
 
   tasks:
-    # 1. Auditd kurulumu
-    - name: apt cache güncelle
-      apt:
-        update_cache: yes
-        cache_valid_time: 3600
 
-    - name: auditd ve rsyslog kur
-      apt:
-        name:
-          - auditd
-          - rsyslog
-        state: present
+  - name: Auditd kurulumu
+    apt:
+      name: auditd
+      state: present
+      update_cache: yes
 
-    # 2. Servisleri aktif et
-    - name: auditd ve rsyslog enable + start
-      systemd:
-        name: "{{ item }}"
-        enabled: yes
-        state: started
-      loop:
-        - auditd
-        - rsyslog
+  - name: Auditd servisini enable et
+    systemd:
+      name: auditd
+      enabled: yes
+      state: started
 
-    # 3. Bash log kodu
-    - name: Bash log kodunu tanımla
-      set_fact:
-        bash_log_code: |
-          # Bash Log
-          PORT=`who am i | awk '{ print $5 }' | sed 's/(//g' | sed 's/)//g'`
-          logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT
-          function history_to_syslog {
-            declare cmd
-            declare p_dir
-            declare LOG_NAME
-            cmd=$(history 1)
-            cmd=$(echo $cmd |awk '{print substr($0,length($1)+2)}')
-            p_dir=$(pwd)
-            LOG_NAME=$(echo $LOGNAME)
-            if [ "$cmd" != "$old_command" ]; then
-              logger -p local5.debug -- Bash SESSION=$$, USER=$LOG_NAME, PWD=$p_dir, CMD="${cmd}"
-            fi
-            old_command=$cmd
-          }
-          trap history_to_syslog DEBUG || EXIT
+  - name: Bash log kodunu /etc/profile dosyasına ekle
+    blockinfile:
+      path: /etc/profile
+      block: |
+        # Bash Log
+        PORT=`who am i | awk '{ print $5 }' | sed 's/(//g' | sed 's/)//g'`
+        logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT
+        function history_to_syslog
+        {
+        declare cmd
+        declare p_dir
+        declare LOG_NAME
+        cmd=$(history 1)
+        cmd=$(echo $cmd |awk '{print substr($0,length($1)+2)}')
+        p_dir=$(pwd)
+        LOG_NAME=$(echo $LOGNAME)
+        if [ "$cmd" != "$old_command" ]; then
+        logger -p local5.debug -- Bash SESSION = $$, from_remote_host = $PORT, USER = $LOG_NAME, PWD = $p_dir, CMD = "${cmd}"
+        fi
+        old_command=$cmd
+        }
+        trap history_to_syslog DEBUG || EXIT
 
-    - name: /etc/profile içine bash log ekle
-      blockinfile:
-        path: /etc/profile
-        block: "{{ bash_log_code }}"
-        marker: "# {mark} ANSIBLE BASH LOG"
-        insertafter: EOF
+  - name: Bash log kodunu /root/.bashrc dosyasına ekle
+    blockinfile:
+      path: /root/.bashrc
+      block: |
+        # Bash Log
+        PORT=`who am i | awk '{ print $5 }' | sed 's/(//g' | sed 's/)//g'`
+        logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT
+        function history_to_syslog
+        {
+        declare cmd
+        declare p_dir
+        declare LOG_NAME
+        cmd=$(history 1)
+        cmd=$(echo $cmd |awk '{print substr($0,length($1)+2)}')
+        p_dir=$(pwd)
+        LOG_NAME=$(echo $LOGNAME)
+        if [ "$cmd" != "$old_command" ]; then
+        logger -p local5.debug -- Bash SESSION = $$, from_remote_host = $PORT, USER = $LOG_NAME, PWD = $p_dir, CMD = "${cmd}"
+        fi
+        old_command=$cmd
+        }
+        trap history_to_syslog DEBUG || EXIT
 
-    - name: /root/.bashrc içine bash log ekle
-      blockinfile:
-        path: /root/.bashrc
-        block: "{{ bash_log_code }}"
-        marker: "# {mark} ANSIBLE BASH LOG"
-        insertafter: EOF
+  - name: Syslog plugin dosyasını tespit et
+    stat:
+      path: /etc/audisp/plugins.d/syslog.conf
+    register: audisp1
 
-    # 4. Audit syslog aktif et
-    - name: audit syslog config dosyalarını kontrol et
-      stat:
-        path: "{{ item }}"
-      loop:
-        - /etc/audisp/plugins.d/syslog.conf
-        - /etc/audit/plugins.d/syslog.conf
-      register: audit_syslog_files
+  - name: Alternatif syslog plugin dosyasını tespit et
+    stat:
+      path: /etc/audit/plugins.d/syslog.conf
+    register: audisp2
 
-    - name: active = yes yap
-      lineinfile:
-        path: "{{ item.item }}"
-        regexp: '^active\s*='
-        line: 'active = yes'
-      when: item.stat.exists
-      loop: "{{ audit_syslog_files.results }}"
+  - name: Auditd syslog plugin aktif et (/etc/audisp/plugins.d)
+    replace:
+      path: /etc/audisp/plugins.d/syslog.conf
+      regexp: '^active =.*'
+      replace: 'active = yes'
+    when: audisp1.stat.exists
 
-    # 5. rsyslog.conf içine audit imfile config EKLE
-    - name: rsyslog.conf audit config ekle
-      blockinfile:
-        path: /etc/rsyslog.conf
-        block: |
-          ############  RSYSLOG  QRADAR
-          {{ remote_syslog_server }}
-          ########################## FOR AUDITD
-          # audit log
-          $ModLoad imfile
-          $InputFileName /var/log/audit/audit.log
-          $InputFileTag tag_audit_log_.$hostname:
-          $InputFileStateFile audit_log
-          $InputFileSeverity info
-          $InputFileFacility local6
-          $InputRunFileMonitor
-        marker: "# {mark} ANSIBLE AUDITD"
-        insertafter: EOF
+  - name: Auditd syslog plugin aktif et (/etc/audit/plugins.d)
+    replace:
+      path: /etc/audit/plugins.d/syslog.conf
+      regexp: '^active =.*'
+      replace: 'active = yes'
+    when: audisp2.stat.exists
 
-    # 6. Bash log dosyası (varsa DOKUNMAZ)
-    - name: bash log dosyasını oluştur (yoksa)
-      file:
-        path: /var/log/bash.log
-        state: touch
-        owner: root
-        group: adm
-        mode: '0640'
+  - name: Rsyslog ana config sonuna audit ve remote log ekle
+    blockinfile:
+      path: /etc/rsyslog.conf
+      block: |
+        ############  RSYSLOG  QRADAR
+        192.168.121.21
+        ########################## FOR AUDITD
+        $ModLoad imfile
+        $InputFileName /var/log/audit/audit.log
+        $InputFileTag tag_audit_log_.$hostname:
+        $InputFileStateFile audit_log
+        $InputFileSeverity info
+        $InputFileFacility local6
+        $InputRunFileMonitor
 
-    - name: bash rsyslog config ekle
-      blockinfile:
-        path: /etc/rsyslog.d/bash.conf
-        create: yes
-        block: |
-          # Bash log
-          local5.debug           /var/log/bash.log
-        marker: "# {mark} ANSIBLE BASH RSYSLOG"
+  - name: Bash log dosyası oluştur
+    file:
+      path: /var/log/bash.log
+      state: touch
+      owner: root
+      group: root
+      mode: '0640'
 
-    # 7. 50-default.conf kuralları
-    - name: 50-default.conf rsyslog kuralları
-      lineinfile:
-        path: /etc/rsyslog.d/50-default.conf
-        regexp: "{{ item.regex }}"
-        line: "{{ item.line }}"
-      loop:
-        - { regex: '^auth,authpriv', line: 'auth,authpriv.*                 /var/log/auth.log' }
-        - { regex: '^\*\.\*;auth,authpriv\.none', line: '*.*;auth,authpriv.none          -/var/log/syslog' }
-        - { regex: '^cron\.\*', line: 'cron.*                          /var/log/cron.log' }
-        - { regex: '^local1\.\*', line: 'local1.*                        /var/log/sudo.log' }
-        - { regex: '^mail\.err', line: 'mail.err                        /var/log/mail.err' }
-        - { regex: '^\*\.emerg', line: '*.emerg                         :omusrmsg:*' }
+  - name: Bash için rsyslog config oluştur
+    copy:
+      dest: /etc/rsyslog.d/bash.conf
+      content: |
+        # Bash log
+        local5.debug           /var/log/bash.log
 
-    # 8. Servis restart
-    - name: rsyslog ve auditd restart
-      systemd:
-        name: "{{ item }}"
-        state: restarted
-      loop:
-        - rsyslog
-        - auditd
+  - name: rsyslog restart
+    systemd:
+      name: rsyslog
+      state: restarted
+
+  - name: auditd restart
+    systemd:
+      name: auditd
+      state: restarted
+
+bu playbook bak bakalım
