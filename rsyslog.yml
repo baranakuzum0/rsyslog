@@ -82,6 +82,21 @@
         insertafter: EOF
         block: "{{ bash_log_block }}"
 
+    - name: Bash log dosyası var mı kontrol et
+      stat:
+        path: /var/log/bash.log
+      register: bash_log_stat
+
+      -name: Bash log dosyasını oluştur (SADECE YOKSA)
+       file:
+        path: /var/log/bash.log
+        state: file
+        owner: root
+        group: adm
+        mode: '0640'
+      when: not bash_log_stat.stat.exists
+
+
     - name: Bash log dosyasını oluştur
       file:
         path: /var/log/bash.log
