@@ -1,3 +1,4 @@
+---
 - name: RSYSLOG + Auditd + Bash Log Kurulumu
   hosts: all
   become: yes
@@ -5,35 +6,35 @@
   vars:
     qradar_ip: "192.168.121.21"
 
-    rsyslog_qradar_block: |
-      ############ RSYSLOG QRADAR ############
-      *.* @@{{ qradar_ip }}:514
-      ########################## AUDITD
-      $ModLoad imfile
-      $InputFileName /var/log/audit/audit.log
-      $InputFileTag tag_audit_log_.$hostname:
-      $InputFileStateFile audit_log
-      $InputFileSeverity info
-      $InputFileFacility local6
-      $InputRunFileMonitor
-
     bash_log_block: |
+      # Bash Log
       PORT=`who am i | awk '{ print $5 }' | sed 's/(//g' | sed 's/)//g'`
       logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT
-      function history_to_syslog {
-        declare cmd
-        declare p_dir
-        declare LOG_NAME
-        cmd=$(history 1)
-        cmd=$(echo $cmd |awk '{print substr($0,length($1)+2)}')
-        p_dir=$(pwd)
-        LOG_NAME=$(echo $LOGNAME)
-        if [ "$cmd" != "$old_command" ]; then
-          logger -p local5.debug -- Bash SESSION=$$, USER=$LOG_NAME, PWD=$p_dir, CMD="${cmd}"
-        fi
-        old_command=$cmd
+      function history_to_syslog
+      {
+      declare cmd
+      declare p_dir
+      declare LOG_NAME
+      cmd=$(history 1)
+      cmd=$(echo $cmd |awk '{print substr($0,length($1)+2)}')
+      p_dir=$(pwd)
+      LOG_NAME=$(echo $LOGNAME)
+      if [ "$cmd" != "$old_command" ]; then
+      logger -p local5.debug -- Bash SESSION=$$, from_remote_host=$PORT, USER=$LOG_NAME, PWD=$p_dir, CMD="${cmd}"
+      fi
+      old_command=$cmd
       }
       trap history_to_syslog DEBUG || EXIT
+
+    rsyslog_lines:
+      - { line: '*.* @@{{ qradar_ip }}:514', regexp: '^\*.\* @@' }
+      - { line: '$ModLoad imfile', regexp: '^\$ModLoad imfile' }
+      - { line: '$InputFileName /var/log/audit/audit.log', regexp: '^\$InputFileName /var/log/audit/audit.log' }
+      - { line: '$InputFileTag tag_audit_log_.$hostname:', regexp: '^\$InputFileTag tag_audit_log_.*' }
+      - { line: '$InputFileStateFile audit_log', regexp: '^\$InputFileStateFile audit_log' }
+      - { line: '$InputFileSeverity info', regexp: '^\$InputFileSeverity info' }
+      - { line: '$InputFileFacility local6', regexp: '^\$InputFileFacility local6' }
+      - { line: '$InputRunFileMonitor', regexp: '^\$InputRunFileMonitor' }
 
   tasks:
 
@@ -62,64 +63,68 @@
         line: 'active = yes'
         create: yes
 
-    - name: /etc/profile bash log script var mı kontrol et
-      shell: grep -q "history_to_syslog" /etc/profile
-      register: profile_bashlog
-      failed_when: false
-      changed_when: false
-
-    - name: /etc/profile bash log script ekle (yoksa)
+    - name: Bash log kodlarını /etc/profile içine ekle (eksikse)
       blockinfile:
         path: /etc/profile
+        marker: "# {mark} ANSIBLE_BASH_LOG"
         insertafter: EOF
         block: "{{ bash_log_block }}"
-      when: profile_bashlog.rc != 0
 
-    - name: /root/.bashrc bash log script var mı kontrol et
-      shell: grep -q "history_to_syslog" /root/.bashrc
-      register: bashrc_bashlog
-      failed_when: false
-      changed_when: false
-
-    - name: /root/.bashrc bash log script ekle (yoksa)
+    - name: Bash log kodlarını /root/.bashrc içine ekle (eksikse)
       blockinfile:
         path: /root/.bashrc
+        marker: "# {mark} ANSIBLE_BASH_LOG"
         insertafter: EOF
         block: "{{ bash_log_block }}"
-      when: bashrc_bashlog.rc != 0
 
-    - name: Bash log dosyası oluştur (yoksa)
+    - name: Bash log dosyası var mı kontrol et
+      stat:
+        path: /var/log/bash.log
+      register: bash_log_stat
+
+    - name: Bash log dosyasını oluştur (yoksa)
       file:
         path: /var/log/bash.log
         state: file
         owner: root
         group: adm
         mode: '0640'
+      when: not bash_log_stat.stat.exists
 
-    - name: Bash rsyslog satırı var mı kontrol et
-      shell: grep -Fq "local5.debug    /var/log/bash.log" /etc/rsyslog.d/bash.conf
-      register: bashrsyslog_exists
+    - name: Rsyslog bash konfig var mı kontrol et
+      shell: grep -q '^local5.debug\s\+/var/log/bash.log' /etc/rsyslog.d/bash.conf
+      register: bash_rsyslog
       failed_when: false
       changed_when: false
 
-    - name: Bash rsyslog satırı ekle (yoksa)
+    - name: Rsyslog bash konfig ekle (eksikse)
+      copy:
+        dest: /etc/rsyslog.d/bash.conf
+        content: |
+          # Bash log
+          local5.debug    /var/log/bash.log
+        owner: root
+        group: root
+        mode: '0644'
+      when: bash_rsyslog.rc != 0
+
+    - name: Rsyslog.conf eksik QRadar + Auditd satırlarını ekle
       lineinfile:
-        path: /etc/rsyslog.d/bash.conf
-        line: "local5.debug    /var/log/bash.log"
-        create: yes
-      when: bashrsyslog_exists.rc != 0
-      notify: restart rsyslog
-
-    - name: Rsyslog.conf içine QRadar + Auditd kurallarını ekle
-      blockinfile:
         path: /etc/rsyslog.conf
-        marker: "# {mark} ANSIBLE_QRADAR_AUDITD"
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
         insertafter: EOF
-        block: "{{ rsyslog_qradar_block }}"
-      notify: restart rsyslog
+        state: present
+      loop: "{{ rsyslog_lines }}"
 
-  handlers:
-    - name: restart rsyslog
+    - name: Rsyslog yeniden başlat
       service:
         name: rsyslog
         state: restarted
+      when: rsyslog_lines is changed or bash_rsyslog.rc != 0
+
+    - name: Auditd yeniden başlat
+      service:
+        name: auditd
+        state: restarted
+      when: false   # sadece gerekirse, genelde değişmez
