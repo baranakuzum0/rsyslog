@@ -71,7 +71,6 @@
     - name: /etc/profile bash log script ekle (yoksa)
       blockinfile:
         path: /etc/profile
-        marker: "# {mark} ANSIBLE_BASH_LOG"
         insertafter: EOF
         block: "{{ bash_log_block }}"
       when: profile_bashlog.rc != 0
@@ -85,7 +84,6 @@
     - name: /root/.bashrc bash log script ekle (yoksa)
       blockinfile:
         path: /root/.bashrc
-        marker: "# {mark} ANSIBLE_BASH_LOG"
         insertafter: EOF
         block: "{{ bash_log_block }}"
       when: bashrc_bashlog.rc != 0
@@ -98,12 +96,18 @@
         group: adm
         mode: '0640'
 
-    - name: Bash rsyslog config ekle (tek blok)
-      blockinfile:
+    - name: Bash rsyslog satırı var mı kontrol et
+      shell: grep -Fq "local5.debug    /var/log/bash.log" /etc/rsyslog.d/bash.conf
+      register: bashrsyslog_exists
+      failed_when: false
+      changed_when: false
+
+    - name: Bash rsyslog satırı ekle (yoksa)
+      lineinfile:
         path: /etc/rsyslog.d/bash.conf
-        marker: "# {mark} ANSIBLE_BASH_RSLOG"
-        block: |
-          local5.debug    /var/log/bash.log
+        line: "local5.debug    /var/log/bash.log"
+        create: yes
+      when: bashrsyslog_exists.rc != 0
       notify: restart rsyslog
 
     - name: Rsyslog.conf içine QRadar + Auditd kurallarını ekle
