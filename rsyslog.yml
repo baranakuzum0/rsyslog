@@ -6,23 +6,23 @@
   vars:
     qradar_ip: "192.168.121.21"
 
-    bash_log_lines:
-      - "PORT=`who am i | awk '{ print \$5 }' | sed 's/(//g' | sed 's/)//g'`"
-      - 'logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT'
-      - 'function history_to_syslog {'
-      - 'declare cmd'
-      - 'declare p_dir'
-      - 'declare LOG_NAME'
-      - 'cmd=$(history 1)'
-      - 'cmd=$(echo $cmd | awk "{print substr(\$0,length(\$1)+2)}")'
-      - 'p_dir=$(pwd)'
-      - 'LOG_NAME=$(echo $LOGNAME)'
-      - 'if [ "$cmd" != "$old_command" ]; then'
-      - 'logger -p local5.debug -- Bash SESSION=$$, from_remote_host=$PORT, USER=$LOG_NAME, PWD=$p_dir, CMD="${cmd}"'
-      - 'fi'
-      - 'old_command=$cmd'
-      - '}'
-      - 'trap history_to_syslog DEBUG || EXIT'
+    bash_log_block: |
+      PORT=`who am i | awk '{ print $5 }' | sed 's/(//g' | sed 's/)//g'`
+      logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT
+      function history_to_syslog {
+        declare cmd
+        declare p_dir
+        declare LOG_NAME
+        cmd=$(history 1)
+        cmd=$(echo $cmd | awk '{print substr($0,length($1)+2)}')
+        p_dir=$(pwd)
+        LOG_NAME=$(echo $LOGNAME)
+        if [ "$cmd" != "$old_command" ]; then
+          logger -p local5.debug -- Bash SESSION=$$, from_remote_host=$PORT, USER=$LOG_NAME, PWD=$p_dir, CMD="${cmd}"
+        fi
+        old_command=$cmd
+      }
+      trap history_to_syslog DEBUG || EXIT
 
     rsyslog_lines:
       - { line: "*.* @@{{ qradar_ip }}:514", regexp: '^\*.\* @@' }
@@ -76,22 +76,16 @@
       when: not bash_log_stat.stat.exists
 
     - name: Bash log script eksik satırları ekle (/etc/profile)
-      lineinfile:
+      blockinfile:
         path: /etc/profile
-        line: "{{ item }}"
-        insertafter: EOF
-        state: present
-      loop: "{{ bash_log_lines }}"
-      check_mode: no
+        marker: "# {mark} ANSIBLE_BASH_LOG"
+        block: "{{ bash_log_block }}"
 
     - name: Bash log script eksik satırları ekle (/root/.bashrc)
-      lineinfile:
+      blockinfile:
         path: /root/.bashrc
-        line: "{{ item }}"
-        insertafter: EOF
-        state: present
-      loop: "{{ bash_log_lines }}"
-      check_mode: no
+        marker: "# {mark} ANSIBLE_BASH_LOG"
+        block: "{{ bash_log_block }}"
 
     - name: Rsyslog bash konfig var mı kontrol et
       shell: grep -q '^local5.debug\s\+/var/log/bash.log' /etc/rsyslog.d/bash.conf
@@ -123,4 +117,3 @@
         name: rsyslog
         state: restarted
       when: bash_rsyslog.rc != 0
-
