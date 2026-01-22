@@ -87,23 +87,14 @@
         path: /var/log/bash.log
       register: bash_log_stat
 
-      -name: Bash log dosyasını oluştur (SADECE YOKSA)
-       file:
+    - name: Bash log dosyasını oluştur (SADECE YOKSA)
+      file:
         path: /var/log/bash.log
         state: file
         owner: root
         group: adm
         mode: '0640'
       when: not bash_log_stat.stat.exists
-
-
-    - name: Bash log dosyasını oluştur
-      file:
-        path: /var/log/bash.log
-        state: touch
-        owner: root
-        group: adm
-        mode: '0640'
 
     - name: Rsyslog bash konfigürasyonu ekle
       copy:
