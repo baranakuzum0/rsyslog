@@ -6,13 +6,9 @@
     qradar_ip: "192.168.121.21"
 
     rsyslog_qradar_block: |
-      ############  RSYSLOG  QRADAR ############
-
-      # Remote log server
+      ############ RSYSLOG QRADAR ############
       *.* @@{{ qradar_ip }}:514
-
-      ########################## FOR AUDITD
-      # audit log
+      ########################## AUDITD
       $ModLoad imfile
       $InputFileName /var/log/audit/audit.log
       $InputFileTag tag_audit_log_.$hostname:
@@ -22,22 +18,20 @@
       $InputRunFileMonitor
 
     bash_log_block: |
-      # Bash Log
       PORT=`who am i | awk '{ print $5 }' | sed 's/(//g' | sed 's/)//g'`
       logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT
-      function history_to_syslog
-      {
-      declare cmd
-      declare p_dir
-      declare LOG_NAME
-      cmd=$(history 1)
-      cmd=$(echo $cmd |awk '{print substr($0,length($1)+2)}')
-      p_dir=$(pwd)
-      LOG_NAME=$(echo $LOGNAME)
-      if [ "$cmd" != "$old_command" ]; then
-      logger -p local5.debug -- Bash SESSION = $$, from_remote_host = $PORT, USER = $LOG_NAME, PWD = $p_dir, CMD = "${cmd}"
-      fi
-      old_command=$cmd
+      function history_to_syslog {
+        declare cmd
+        declare p_dir
+        declare LOG_NAME
+        cmd=$(history 1)
+        cmd=$(echo $cmd |awk '{print substr($0,length($1)+2)}')
+        p_dir=$(pwd)
+        LOG_NAME=$(echo $LOGNAME)
+        if [ "$cmd" != "$old_command" ]; then
+          logger -p local5.debug -- Bash SESSION=$$, USER=$LOG_NAME, PWD=$p_dir, CMD="${cmd}"
+        fi
+        old_command=$cmd
       }
       trap history_to_syslog DEBUG || EXIT
 
@@ -61,50 +55,55 @@
         state: started
         enabled: yes
 
-    - name: Audit log syslog plugin aktif et
+    - name: Audit syslog plugin aktif et
       lineinfile:
         path: /etc/audit/plugins.d/syslog.conf
         regexp: '^active\s*='
         line: 'active = yes'
         create: yes
 
-    - name: Bash log kodlarını /etc/profile içine ekle
+    - name: /etc/profile bash log script var mı kontrol et
+      shell: grep -q "history_to_syslog" /etc/profile
+      register: profile_bashlog
+      failed_when: false
+      changed_when: false
+
+    - name: /etc/profile bash log script ekle (yoksa)
       blockinfile:
         path: /etc/profile
         marker: "# {mark} ANSIBLE_BASH_LOG"
         insertafter: EOF
         block: "{{ bash_log_block }}"
+      when: profile_bashlog.rc != 0
 
-    - name: Bash log kodlarını /root/.bashrc içine ekle
+    - name: /root/.bashrc bash log script var mı kontrol et
+      shell: grep -q "history_to_syslog" /root/.bashrc
+      register: bashrc_bashlog
+      failed_when: false
+      changed_when: false
+
+    - name: /root/.bashrc bash log script ekle (yoksa)
       blockinfile:
         path: /root/.bashrc
         marker: "# {mark} ANSIBLE_BASH_LOG"
         insertafter: EOF
         block: "{{ bash_log_block }}"
+      when: bashrc_bashlog.rc != 0
 
-    - name: Bash log dosyası var mı kontrol et
-      stat:
-        path: /var/log/bash.log
-      register: bash_log_stat
-
-    - name: Bash log dosyasını oluştur (SADECE YOKSA)
+    - name: Bash log dosyası oluştur (yoksa)
       file:
         path: /var/log/bash.log
         state: file
         owner: root
         group: adm
         mode: '0640'
-      when: not bash_log_stat.stat.exists
 
-    - name: Rsyslog bash konfigürasyonu ekle
-      copy:
-        dest: /etc/rsyslog.d/bash.conf
-        content: |
-          # Bash log
-          local5.debug           /var/log/bash.log
-        owner: root
-        group: root
-        mode: '0644'
+    - name: Bash rsyslog config ekle
+      lineinfile:
+        path: /etc/rsyslog.d/bash.conf
+        line: "local5.debug    /var/log/bash.log"
+        create: yes
+      notify: restart rsyslog
 
     - name: Rsyslog.conf içine QRadar + Auditd kurallarını ekle
       blockinfile:
@@ -112,13 +111,10 @@
         marker: "# {mark} ANSIBLE_QRADAR_AUDITD"
         insertafter: EOF
         block: "{{ rsyslog_qradar_block }}"
+      notify: restart rsyslog
 
-    - name: Rsyslog yeniden başlat
+  handlers:
+    - name: restart rsyslog
       service:
         name: rsyslog
-        state: restarted
-
-    - name: Auditd yeniden başlat
-      service:
-        name: auditd
         state: restarted
