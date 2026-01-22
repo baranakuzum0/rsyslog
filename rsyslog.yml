@@ -7,22 +7,39 @@
     qradar_ip: "192.168.121.21"
 
     bash_log_entries:
-      - { line: 'PORT=`who am i | awk '\''{ print $5 }'\'' | sed '\''s/(//g'\'' | sed '\''s/)//g'\''`', regexp: '^PORT=' }
-      - { line: 'logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT', regexp: '^logger -p local5.debug' }
-      - { line: 'function history_to_syslog {', regexp: '^function history_to_syslog' }
-      - { line: 'declare cmd', regexp: '^declare cmd' }
-      - { line: 'declare p_dir', regexp: '^declare p_dir' }
-      - { line: 'declare LOG_NAME', regexp: '^declare LOG_NAME' }
-      - { line: 'cmd=$(history 1)', regexp: '^cmd=' }
-      - { line: 'cmd=$(echo $cmd | awk '\''{print substr($0,length($1)+2)}'\'')', regexp: '^cmd=\$\(echo \$cmd' }
-      - { line: 'p_dir=$(pwd)', regexp: '^p_dir=' }
-      - { line: 'LOG_NAME=$(echo $LOGNAME)', regexp: '^LOG_NAME=' }
-      - { line: 'if [ "$cmd" != "$old_command" ]; then', regexp: '^if \[ "\$cmd" != "\$old_command"' }
-      - { line: 'logger -p local5.debug -- Bash SESSION=$$, from_remote_host=$PORT, USER=$LOG_NAME, PWD=$p_dir, CMD="${cmd}"', regexp: '^logger -p local5.debug -- Bash' }
-      - { line: 'fi', regexp: '^fi$' }
-      - { line: 'old_command=$cmd', regexp: '^old_command=' }
-      - { line: '}', regexp: '^\}$' }
-      - { line: 'trap history_to_syslog DEBUG || EXIT', regexp: '^trap history_to_syslog DEBUG' }
+      - line: |
+          PORT=`who am i | awk '{ print $5 }' | sed 's/(//g' | sed 's/)//g'`
+        regexp: '^PORT='
+      - line: 'logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT'
+        regexp: '^logger -p local5.debug'
+      - line: 'function history_to_syslog {'
+        regexp: '^function history_to_syslog'
+      - line: 'declare cmd'
+        regexp: '^declare cmd'
+      - line: 'declare p_dir'
+        regexp: '^declare p_dir'
+      - line: 'declare LOG_NAME'
+        regexp: '^declare LOG_NAME'
+      - line: 'cmd=$(history 1)'
+        regexp: '^cmd='
+      - line: 'cmd=$(echo $cmd | awk "{print substr($0,length($1)+2)}")'
+        regexp: '^cmd=\$\(echo \$cmd'
+      - line: 'p_dir=$(pwd)'
+        regexp: '^p_dir='
+      - line: 'LOG_NAME=$(echo $LOGNAME)'
+        regexp: '^LOG_NAME='
+      - line: 'if [ "$cmd" != "$old_command" ]; then'
+        regexp: '^if \[ "\$cmd" != "\$old_command"'
+      - line: 'logger -p local5.debug -- Bash SESSION=$$, from_remote_host=$PORT, USER=$LOG_NAME, PWD=$p_dir, CMD="${cmd}"'
+        regexp: '^logger -p local5.debug -- Bash'
+      - line: 'fi'
+        regexp: '^fi$'
+      - line: 'old_command=$cmd'
+        regexp: '^old_command='
+      - line: '}'
+        regexp: '^\}$'
+      - line: 'trap history_to_syslog DEBUG || EXIT'
+        regexp: '^trap history_to_syslog DEBUG'
 
     rsyslog_lines:
       - { line: "*.* @@{{ qradar_ip }}:514", regexp: '^\*.\* @@' }
@@ -76,20 +93,24 @@
       when: not bash_log_stat.stat.exists
 
     - name: Bash log script eksik satırları ekle (/etc/profile)
-      lineinfile:
+      blockinfile:
         path: /etc/profile
-        regexp: "{{ item.regexp }}"
-        line: "{{ item.line }}"
+        marker: "# {mark} ANSIBLE_BASH_LOG"
+        block: |
+          {% for entry in bash_log_entries %}
+          {{ entry.line }}
+          {% endfor %}
         insertafter: EOF
-      loop: "{{ bash_log_entries }}"
 
     - name: Bash log script eksik satırları ekle (/root/.bashrc)
-      lineinfile:
+      blockinfile:
         path: /root/.bashrc
-        regexp: "{{ item.regexp }}"
-        line: "{{ item.line }}"
+        marker: "# {mark} ANSIBLE_BASH_LOG"
+        block: |
+          {% for entry in bash_log_entries %}
+          {{ entry.line }}
+          {% endfor %}
         insertafter: EOF
-      loop: "{{ bash_log_entries }}"
 
     - name: Rsyslog bash konfig var mı kontrol et
       shell: grep -q '^local5.debug\s\+/var/log/bash.log' /etc/rsyslog.d/bash.conf
@@ -113,6 +134,7 @@
         regexp: "{{ item.regexp }}"
         line: "{{ item.line }}"
         insertafter: EOF
+        state: present
       loop: "{{ rsyslog_lines }}"
 
     - name: Rsyslog yeniden başlat
