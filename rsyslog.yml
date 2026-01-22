@@ -7,39 +7,22 @@
     qradar_ip: "192.168.121.21"
 
     bash_log_entries:
-      - line: |
-          PORT=`who am i | awk '{ print $5 }' | sed 's/(//g' | sed 's/)//g'`
-        regexp: '^PORT='
-      - line: 'logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT'
-        regexp: '^logger -p local5.debug'
-      - line: 'function history_to_syslog {'
-        regexp: '^function history_to_syslog'
-      - line: 'declare cmd'
-        regexp: '^declare cmd'
-      - line: 'declare p_dir'
-        regexp: '^declare p_dir'
-      - line: 'declare LOG_NAME'
-        regexp: '^declare LOG_NAME'
-      - line: 'cmd=$(history 1)'
-        regexp: '^cmd='
-      - line: 'cmd=$(echo $cmd | awk "{print substr($0,length($1)+2)}")'
-        regexp: '^cmd=\$\(echo \$cmd'
-      - line: 'p_dir=$(pwd)'
-        regexp: '^p_dir='
-      - line: 'LOG_NAME=$(echo $LOGNAME)'
-        regexp: '^LOG_NAME='
-      - line: 'if [ "$cmd" != "$old_command" ]; then'
-        regexp: '^if \[ "\$cmd" != "\$old_command"'
-      - line: 'logger -p local5.debug -- Bash SESSION=$$, from_remote_host=$PORT, USER=$LOG_NAME, PWD=$p_dir, CMD="${cmd}"'
-        regexp: '^logger -p local5.debug -- Bash'
-      - line: 'fi'
-        regexp: '^fi$'
-      - line: 'old_command=$cmd'
-        regexp: '^old_command='
-      - line: '}'
-        regexp: '^\}$'
-      - line: 'trap history_to_syslog DEBUG || EXIT'
-        regexp: '^trap history_to_syslog DEBUG'
+      - "PORT=`who am i | awk '{ print $5 }' | sed 's/(//g' | sed 's/)//g'`"
+      - 'logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT'
+      - 'function history_to_syslog {'
+      - 'declare cmd'
+      - 'declare p_dir'
+      - 'declare LOG_NAME'
+      - 'cmd=$(history 1)'
+      - 'cmd=$(echo $cmd | awk "{print substr(\$0,length(\$1)+2)}")'
+      - 'p_dir=$(pwd)'
+      - 'LOG_NAME=$(echo $LOGNAME)'
+      - 'if [ "$cmd" != "$old_command" ]; then'
+      - 'logger -p local5.debug -- Bash SESSION=$$, from_remote_host=$PORT, USER=$LOG_NAME, PWD=$p_dir, CMD="${cmd}"'
+      - 'fi'
+      - 'old_command=$cmd'
+      - '}'
+      - 'trap history_to_syslog DEBUG || EXIT'
 
     rsyslog_lines:
       - { line: "*.* @@{{ qradar_ip }}:514", regexp: '^\*.\* @@' }
@@ -50,6 +33,14 @@
       - { line: "$InputFileSeverity info", regexp: '^\$InputFileSeverity info' }
       - { line: "$InputFileFacility local6", regexp: '^\$InputFileFacility local6' }
       - { line: "$InputRunFileMonitor", regexp: '^\$InputRunFileMonitor' }
+
+    default_conf_lines:
+      - { line: "auth,authpriv.*                 /var/log/auth.log", regexp: '^auth,authpriv\.\*' }
+      - { line: "*.*;auth,authpriv.none          -/var/log/syslog", regexp: '^\*\.\*;auth,authpriv\.none' }
+      - { line: "cron.*                          /var/log/cron.log", regexp: '^cron\.\*' }
+      - { line: "local1.*                        /var/log/sudo.log", regexp: '^local1\.\*' }
+      - { line: "mail.err                        /var/log/mail.err", regexp: '^mail\.err' }
+      - { line: "*.emerg                         :omusrmsg:*", regexp: '^\*\.emerg' }
 
   tasks:
 
@@ -78,41 +69,31 @@
         line: 'active = yes'
         create: yes
 
-    - name: Bash log dosyası var mı kontrol et
-      stat:
-        path: /var/log/bash.log
-      register: bash_log_stat
-
     - name: Bash log dosyasını oluştur (yoksa)
       file:
         path: /var/log/bash.log
-        state: file
+        state: touch
         owner: root
         group: adm
         mode: '0640'
-      when: not bash_log_stat.stat.exists
 
     - name: Bash log script eksik satırları ekle (/etc/profile)
-      blockinfile:
+      lineinfile:
         path: /etc/profile
-        marker: "# {mark} ANSIBLE_BASH_LOG"
-        block: |
-          {% for entry in bash_log_entries %}
-          {{ entry.line }}
-          {% endfor %}
+        line: "{{ item }}"
         insertafter: EOF
+        state: present
+      loop: "{{ bash_log_entries }}"
 
     - name: Bash log script eksik satırları ekle (/root/.bashrc)
-      blockinfile:
+      lineinfile:
         path: /root/.bashrc
-        marker: "# {mark} ANSIBLE_BASH_LOG"
-        block: |
-          {% for entry in bash_log_entries %}
-          {{ entry.line }}
-          {% endfor %}
+        line: "{{ item }}"
         insertafter: EOF
+        state: present
+      loop: "{{ bash_log_entries }}"
 
-    - name: Rsyslog bash konfig var mı kontrol et
+    - name: Rsyslog bash konfig eksik mi kontrol
       shell: grep -q '^local5.debug\s\+/var/log/bash.log' /etc/rsyslog.d/bash.conf
       register: bash_rsyslog
       failed_when: false
@@ -137,8 +118,15 @@
         state: present
       loop: "{{ rsyslog_lines }}"
 
-    - name: Rsyslog yeniden başlat
+    - name: 50-default.conf eksik log kurallarını ekle
+      lineinfile:
+        path: /etc/rsyslog.d/50-default.conf
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        state: present
+      loop: "{{ default_conf_lines }}"
+
+    - name: Rsyslog servisini yeniden başlat (her durumda)
       service:
         name: rsyslog
         state: restarted
-      
