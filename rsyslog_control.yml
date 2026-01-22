@@ -1,34 +1,32 @@
-- name: RSYSLOG + Auditd + Bash Log KONTROL (READ-ONLY)
+- name: RSYSLOG + Auditd + Bash Log KONTROL
   hosts: all
   become: yes
   gather_facts: no
 
   tasks:
 
-    # 1. Paket kontrol
+    # 1. Paket kontrolü
     - name: auditd paketi kurulu mu
-      command: dpkg -s auditd
+      shell: dpkg -s auditd
       register: auditd_pkg
       failed_when: false
       changed_when: false
 
     - name: rsyslog paketi kurulu mu
-      command: dpkg -s rsyslog
+      shell: dpkg -s rsyslog
       register: rsyslog_pkg
       failed_when: false
       changed_when: false
 
-    # 2. Servis kontrol
+    # 2. Servis kontrolü
     - name: auditd servis durumu
-      systemctl:
-        name: auditd
+      shell: systemctl is-active auditd
       register: auditd_service
       failed_when: false
       changed_when: false
 
     - name: rsyslog servis durumu
-      systemctl:
-        name: rsyslog
+      shell: systemctl is-active rsyslog
       register: rsyslog_service
       failed_when: false
       changed_when: false
@@ -47,13 +45,13 @@
       failed_when: false
       changed_when: false
 
-    # 5. Bash log dosyası
-    - name: bash log dosyası var mı
+    # 5. Bash log dosyası var mı
+    - name: bash log dosyası kontrol
       stat:
         path: /var/log/bash.log
       register: bash_log_file
 
-    # 6. Bash rsyslog kuralı
+    # 6. Bash rsyslog kuralı var mı
     - name: bash rsyslog config kontrol
       shell: grep -q 'local5.debug\s\+/var/log/bash.log' /etc/rsyslog.d/bash.conf
       register: bash_rsyslog
@@ -64,11 +62,11 @@
     - name: KONTROL ÖZETİ
       debug:
         msg:
-          - "auditd paket: {{ 'OK' if auditd_pkg.rc == 0 else 'YOK' }}"
-          - "rsyslog paket: {{ 'OK' if rsyslog_pkg.rc == 0 else 'YOK' }}"
-          - "auditd servis: {{ 'OK' if auditd_service.status.ActiveState == 'active' else 'PASIF' }}"
-          - "rsyslog servis: {{ 'OK' if rsyslog_service.status.ActiveState == 'active' else 'PASIF' }}"
-          - "audit syslog active: {{ 'OK' if audit_syslog_active.rc == 0 else 'YOK' }}"
-          - "rsyslog audit imfile: {{ 'OK' if rsyslog_audit.rc == 0 else 'YOK' }}"
-          - "bash log dosyası: {{ 'OK' if bash_log_file.stat.exists else 'YOK' }}"
-          - "bash rsyslog kuralı: {{ 'OK' if bash_rsyslog.rc == 0 else 'YOK' }}"
+          - "auditd paket        : {{ 'OK' if auditd_pkg.rc == 0 else 'YOK' }}"
+          - "rsyslog paket       : {{ 'OK' if rsyslog_pkg.rc == 0 else 'YOK' }}"
+          - "auditd servis       : {{ 'OK' if auditd_service.stdout == 'active' else 'PASIF' }}"
+          - "rsyslog servis      : {{ 'OK' if rsyslog_service.stdout == 'active' else 'PASIF' }}"
+          - "audit syslog active : {{ 'OK' if audit_syslog_active.rc == 0 else 'YOK' }}"
+          - "rsyslog audit log   : {{ 'OK' if rsyslog_audit.rc == 0 else 'YOK' }}"
+          - "bash log dosyası    : {{ 'OK' if bash_log_file.stat.exists else 'YOK' }}"
+          - "bash rsyslog kuralı : {{ 'OK' if bash_rsyslog.rc == 0 else 'YOK' }}"
