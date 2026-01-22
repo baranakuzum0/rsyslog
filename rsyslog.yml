@@ -98,11 +98,12 @@
         group: adm
         mode: '0640'
 
-    - name: Bash rsyslog config ekle
-      lineinfile:
+    - name: Bash rsyslog config ekle (tek blok)
+      blockinfile:
         path: /etc/rsyslog.d/bash.conf
-        line: "local5.debug    /var/log/bash.log"
-        create: yes
+        marker: "# {mark} ANSIBLE_BASH_RSLOG"
+        block: |
+          local5.debug    /var/log/bash.log
       notify: restart rsyslog
 
     - name: Rsyslog.conf içine QRadar + Auditd kurallarını ekle
