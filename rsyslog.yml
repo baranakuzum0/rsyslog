@@ -87,7 +87,8 @@
     - name: rsyslog.conf içinde audit ve remote log kontrol
       shell: grep -q '\$InputFileName /var/log/audit/audit.log' /etc/rsyslog.conf
       register: audit_present
-      ignore_errors: yes
+      failed_when: false
+      changed_when: false
 
     - name: rsyslog.conf içine audit ve remote log ekle
       blockinfile:
