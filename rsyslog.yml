@@ -26,15 +26,17 @@
       }
       trap history_to_syslog DEBUG || EXIT
 
-    rsyslog_lines:
-      - { line: '*.* @@{{ qradar_ip }}:514', regexp: '^\*.\* @@' }
-      - { line: '$ModLoad imfile', regexp: '^\$ModLoad imfile' }
-      - { line: '$InputFileName /var/log/audit/audit.log', regexp: '^\$InputFileName /var/log/audit/audit.log' }
-      - { line: '$InputFileTag tag_audit_log_.$hostname:', regexp: '^\$InputFileTag tag_audit_log_.*' }
-      - { line: '$InputFileStateFile audit_log', regexp: '^\$InputFileStateFile audit_log' }
-      - { line: '$InputFileSeverity info', regexp: '^\$InputFileSeverity info' }
-      - { line: '$InputFileFacility local6', regexp: '^\$InputFileFacility local6' }
-      - { line: '$InputRunFileMonitor', regexp: '^\$InputRunFileMonitor' }
+    rsyslog_qradar_block: |
+      ############ RSYSLOG QRADAR ############
+      *.* @@{{ qradar_ip }}:514
+      ########################## AUDITD
+      $ModLoad imfile
+      $InputFileName /var/log/audit/audit.log
+      $InputFileTag tag_audit_log_.$hostname:
+      $InputFileStateFile audit_log
+      $InputFileSeverity info
+      $InputFileFacility local6
+      $InputRunFileMonitor
 
   tasks:
 
@@ -108,23 +110,22 @@
         mode: '0644'
       when: bash_rsyslog.rc != 0
 
-    - name: Rsyslog.conf eksik QRadar + Auditd satırlarını ekle
-      lineinfile:
+    - name: Rsyslog.conf QRadar + Auditd blok eksik veya eksik satırlar varsa ekle/güncelle
+      blockinfile:
         path: /etc/rsyslog.conf
-        regexp: "{{ item.regexp }}"
-        line: "{{ item.line }}"
+        marker: "# {mark} ANSIBLE_QRADAR_AUDITD"
         insertafter: EOF
-        state: present
-      loop: "{{ rsyslog_lines }}"
+        block: "{{ rsyslog_qradar_block }}"
+        create: yes
 
     - name: Rsyslog yeniden başlat
       service:
         name: rsyslog
         state: restarted
-      when: rsyslog_lines is changed or bash_rsyslog.rc != 0
+      when: bash_rsyslog.rc != 0 or bash_log_stat.stat.exists == false
 
-    - name: Auditd yeniden başlat
+    - name: Auditd yeniden başlat (genelde gerek yok)
       service:
         name: auditd
         state: restarted
-      when: false   # sadece gerekirse, genelde değişmez
+      when: false
