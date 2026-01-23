@@ -1,72 +1,99 @@
-- name: RSYSLOG + Auditd + Bash Log KONTROL
+---
+- name: RSYSLOG + Auditd + Bash Log Kontrolü
   hosts: all
   become: yes
-  gather_facts: no
+
+  vars:
+    bash_log_entries:
+      - regexp: '^PORT='
+      - regexp: '^logger -p local5.debug'
+      - regexp: '^function history_to_syslog'
+      - regexp: '^declare cmd'
+      - regexp: '^declare p_dir'
+      - regexp: '^declare LOG_NAME'
+      - regexp: '^cmd='
+      - regexp: '^cmd=\$\(echo \$cmd'
+      - regexp: '^p_dir='
+      - regexp: '^LOG_NAME='
+      - regexp: '^if \[ "\$cmd" != "\$old_command"'
+      - regexp: '^logger -p local5.debug -- Bash'
+      - regexp: '^fi$'
+      - regexp: '^old_command='
+      - regexp: '^\}$'
+      - regexp: '^trap history_to_syslog DEBUG'
+
+    rsyslog_lines:
+      - regexp: '^\*.\* @@192\.168\.121\.21:514'
+      - regexp: '^\$ModLoad imfile'
+      - regexp: '^\$InputFileName /var/log/audit/audit.log'
+      - regexp: '^\$InputFileTag tag_audit_log_.*'
+      - regexp: '^\$InputFileStateFile audit_log'
+      - regexp: '^\$InputFileSeverity info'
+      - regexp: '^\$InputFileFacility local6'
+      - regexp: '^\$InputRunFileMonitor'
+
+    default_conf_lines:
+      - regexp: '^auth,authpriv\.\*'
+      - regexp: '^\*\.\*;auth,authpriv\.none'
+      - regexp: '^cron\.\*'
+      - regexp: '^local1\.\*'
+      - regexp: '^mail\.err'
+      - regexp: '^\*\.emerg'
 
   tasks:
 
-    # 1. Paket kontrolü
-    - name: auditd paketi kurulu mu
-      shell: dpkg -s auditd
-      register: auditd_pkg
-      failed_when: false
-      changed_when: false
+    - name: Bash log satırlarını kontrol et (/etc/profile)
+      shell: "grep -E '{{ item.regexp }}' /etc/profile"
+      register: bash_profile_check
+      ignore_errors: yes
+      loop: "{{ bash_log_entries }}"
+      loop_control:
+        label: "{{ item.regexp }}"
 
-    - name: rsyslog paketi kurulu mu
-      shell: dpkg -s rsyslog
-      register: rsyslog_pkg
-      failed_when: false
-      changed_when: false
+    - name: Bash log satırlarını kontrol et (/root/.bashrc)
+      shell: "grep -E '{{ item.regexp }}' /root/.bashrc"
+      register: bash_bashrc_check
+      ignore_errors: yes
+      loop: "{{ bash_log_entries }}"
+      loop_control:
+        label: "{{ item.regexp }}"
 
-    # 2. Servis kontrolü
-    - name: auditd servis durumu
-      shell: systemctl is-active auditd
-      register: auditd_service
-      failed_when: false
-      changed_when: false
+    - name: Rsyslog satırlarını kontrol et (/etc/rsyslog.conf)
+      shell: "grep -E '{{ item.regexp }}' /etc/rsyslog.conf"
+      register: rsyslog_check
+      ignore_errors: yes
+      loop: "{{ rsyslog_lines }}"
+      loop_control:
+        label: "{{ item.regexp }}"
 
-    - name: rsyslog servis durumu
-      shell: systemctl is-active rsyslog
-      register: rsyslog_service
-      failed_when: false
-      changed_when: false
+    - name: 50-default.conf satırlarını kontrol et (/etc/rsyslog.d/50-default.conf)
+      shell: "grep -E '{{ item.regexp }}' /etc/rsyslog.d/50-default.conf"
+      register: default_conf_check
+      ignore_errors: yes
+      loop: "{{ default_conf_lines }}"
+      loop_control:
+        label: "{{ item.regexp }}"
 
-    # 3. Audit → syslog aktif mi
-    - name: audit syslog active kontrol
-      shell: grep -q '^active\s*=\s*yes' /etc/audit/plugins.d/syslog.conf
-      register: audit_syslog_active
-      failed_when: false
-      changed_when: false
-
-    # 4. Rsyslog audit imfile var mı
-    - name: rsyslog audit imfile kontrol
-      shell: grep -q '\$InputFileName /var/log/audit/audit.log' /etc/rsyslog.conf
-      register: rsyslog_audit
-      failed_when: false
-      changed_when: false
-
-    # 5. Bash log dosyası var mı
-    - name: bash log dosyası kontrol
-      stat:
-        path: /var/log/bash.log
-      register: bash_log_file
-
-    # 6. Bash rsyslog kuralı var mı
-    - name: bash rsyslog config kontrol
-      shell: grep -q 'local5.debug\s\+/var/log/bash.log' /etc/rsyslog.d/bash.conf
-      register: bash_rsyslog
-      failed_when: false
-      changed_when: false
-
-    # 7. ÖZET RAPOR
-    - name: KONTROL ÖZETİ
+    - name: Sonuçları göster (/etc/profile)
       debug:
-        msg:
-          - "auditd paket        : {{ 'OK' if auditd_pkg.rc == 0 else 'YOK' }}"
-          - "rsyslog paket       : {{ 'OK' if rsyslog_pkg.rc == 0 else 'YOK' }}"
-          - "auditd servis       : {{ 'OK' if auditd_service.stdout == 'active' else 'PASIF' }}"
-          - "rsyslog servis      : {{ 'OK' if rsyslog_service.stdout == 'active' else 'PASIF' }}"
-          - "audit syslog active : {{ 'OK' if audit_syslog_active.rc == 0 else 'YOK' }}"
-          - "rsyslog audit log   : {{ 'OK' if rsyslog_audit.rc == 0 else 'YOK' }}"
-          - "bash log dosyası    : {{ 'OK' if bash_log_file.stat.exists else 'YOK' }}"
-          - "bash rsyslog kuralı : {{ 'OK' if bash_rsyslog.rc == 0 else 'YOK' }}"
+        msg: "Eksik Bash log satırı (profile): {{ item.item.regexp }}"
+      loop: "{{ bash_profile_check.results }}"
+      when: item.rc != 0
+
+    - name: Sonuçları göster (/root/.bashrc)
+      debug:
+        msg: "Eksik Bash log satırı (bashrc): {{ item.item.regexp }}"
+      loop: "{{ bash_bashrc_check.results }}"
+      when: item.rc != 0
+
+    - name: Sonuçları göster (/etc/rsyslog.conf)
+      debug:
+        msg: "Eksik Rsyslog satırı: {{ item.item.regexp }}"
+      loop: "{{ rsyslog_check.results }}"
+      when: item.rc != 0
+
+    - name: Sonuçları göster (50-default.conf)
+      debug:
+        msg: "Eksik 50-default.conf satırı: {{ item.item.regexp }}"
+      loop: "{{ default_conf_check.results }}"
+      when: item.rc != 0
