@@ -1,80 +1,128 @@
 ---
-- name: RSYSLOG + Auditd + Bash Log Kontrolü (Ubuntu/Debian)
+- name: RSYSLOG + Auditd + Bash Log Kurulum Kontrolü (Ubuntu/Debian)
   hosts: all
   become: yes
-  gather_facts: yes
 
   vars:
-    bash_log_files:
-      - /etc/profile
-      - /root/.bashrc
-    bash_log_code_snippet: "logger -p local5.debug"
+    qradar_ip: "192.168.121.21"
+
+    # 1. Bash log kodları
+    bash_log_entries:
+      - "^PORT="
+      - "^logger -p local5.debug"
+      - "^function history_to_syslog"
+      - "^declare cmd"
+      - "^declare p_dir"
+      - "^declare LOG_NAME"
+      - "^cmd="
+      - "^cmd=\\$\\(echo \\$cmd"
+      - "^p_dir="
+      - "^LOG_NAME="
+      - "^if \\[ \"\\$cmd\" != \"\\$old_command\""
+      - "^logger -p local5.debug -- Bash"
+      - "^fi$"
+      - "^old_command="
+      - "^\\}$"
+      - "^trap history_to_syslog DEBUG"
+
+    # 2. rsyslog.conf QRadar + Auditd satırları
+    rsyslog_lines:
+      - ".*@@{{ qradar_ip }}:514"
+      - "\\$ModLoad imfile"
+      - "\\$InputFileName /var/log/audit/audit.log"
+      - "\\$InputFileTag tag_audit_log_.*"
+      - "\\$InputFileStateFile audit_log"
+      - "\\$InputFileSeverity info"
+      - "\\$InputFileFacility local6"
+      - "\\$InputRunFileMonitor"
+
+    # 3. 50-default.conf log kuralları
+    default_conf_lines:
+      - "auth,authpriv.*                 /var/log/auth.log"
+      - "*.*;auth,authpriv.none          -/var/log/syslog"
+      - "cron.*                          /var/log/cron.log"
+      - "local1.*                        /var/log/sudo.log"
+      - "mail.err                        /var/log/mail.err"
+      - "*.emerg                         :omusrmsg:*"
 
   tasks:
 
-  - name: Auditd servisinin kurulu olup olmadığını kontrol et
-    ansible.builtin.shell: dpkg -l | grep auditd
-    register: auditd_installed
-    ignore_errors: yes
+    # 1. Auditd ve Rsyslog servisleri kurulu mu?
+    - name: Auditd servisi kontrol
+      stat:
+        path: /etc/audit/auditd.conf
+      register: auditd_conf
+    - debug:
+        msg: "Auditd: {{ 'ok' if auditd_conf.stat.exists else 'yok' }}"
 
-  - name: Auditd kontrol sonucu
-    ansible.builtin.debug:
-      msg: "{{ 'ok' if auditd_installed.rc == 0 else 'yok' }}"
+    - name: Rsyslog servisi kontrol
+      stat:
+        path: /etc/rsyslog.conf
+      register: rsyslog_conf
+    - debug:
+        msg: "Rsyslog: {{ 'ok' if rsyslog_conf.stat.exists else 'yok' }}"
 
-  - name: Rsyslog servisinin kurulu olup olmadığını kontrol et
-    ansible.builtin.shell: dpkg -l | grep rsyslog
-    register: rsyslog_installed
-    ignore_errors: yes
+    # 2. Bash log satırları (/etc/profile ve /root/.bashrc)
+    - name: Bash log satır kontrol (/etc/profile)
+      shell: "grep -E '{{ item }}' /etc/profile"
+      loop: "{{ bash_log_entries }}"
+      register: bash_profile_check
+      ignore_errors: yes
+      changed_when: false
 
-  - name: Rsyslog kontrol sonucu
-    ansible.builtin.debug:
-      msg: "{{ 'ok' if rsyslog_installed.rc == 0 else 'yok' }}"
+    - name: Bash log satır kontrol (/root/.bashrc)
+      shell: "grep -E '{{ item }}' /root/.bashrc"
+      loop: "{{ bash_log_entries }}"
+      register: bash_bashrc_check
+      ignore_errors: yes
+      changed_when: false
 
-  - name: Bash log kodunun /etc/profile ve /root/.bashrc dosyalarında olup olmadığını kontrol et
-    ansible.builtin.shell: grep -q "{{ bash_log_code_snippet }}" {{ item }}
-    register: bash_log_check
-    ignore_errors: yes
-    loop: "{{ bash_log_files }}"
-    loop_control:
-      label: "{{ item }}"
+    - name: Bash log satır sonuçları (/etc/profile)
+      debug:
+        msg: "Bash log (/etc/profile) {{ item.item }}: {{ 'ok' if item.rc == 0 else 'yok' }}"
+      loop: "{{ bash_profile_check.results }}"
 
-  - name: Bash log kontrol sonucu
-    ansible.builtin.debug:
-      msg: "{{ item.item }} : {{ 'ok' if item.rc == 0 else 'yok' }}"
-    loop: "{{ bash_log_check.results }}"
+    - name: Bash log satır sonuçları (/root/.bashrc)
+      debug:
+        msg: "Bash log (/root/.bashrc) {{ item.item }}: {{ 'ok' if item.rc == 0 else 'yok' }}"
+      loop: "{{ bash_bashrc_check.results }}"
 
-  - name: Auditd syslog plugin aktif mi kontrol et
-    ansible.builtin.shell: grep -E '^active\s*=\s*yes' /etc/audit/plugins.d/syslog.conf || grep -E '^active\s*=\s*yes' /etc/audisp/plugins.d/syslog.conf
-    register: auditd_syslog_plugin
-    ignore_errors: yes
+    # 3. Bash log dosyası
+    - stat:
+        path: /var/log/bash.log
+      register: bash_log_file
+    - debug:
+        msg: "Bash log dosyası: {{ 'ok' if bash_log_file.stat.exists else 'yok' }}"
 
-  - name: Auditd syslog plugin kontrol sonucu
-    ansible.builtin.debug:
-      msg: "{{ 'ok' if auditd_syslog_plugin.rc == 0 else 'yok' }}"
+    # 4. Rsyslog Bash ayarı dosyası
+    - stat:
+        path: /etc/rsyslog.d/bash.conf
+      register: bash_rsyslog_file
+    - debug:
+        msg: "Rsyslog bash ayarı dosyası: {{ 'ok' if bash_rsyslog_file.stat.exists else 'yok' }}"
 
-  - name: Rsyslog bash log dosyası mevcut mu kontrol et
-    ansible.builtin.stat:
-      path: /var/log/bash.log
-    register: bash_log_file
+    # 5. rsyslog.conf QRadar + Auditd satırları
+    - name: rsyslog.conf QRadar/Audit satır kontrol
+      shell: "grep -E '{{ item }}' /etc/rsyslog.conf"
+      loop: "{{ rsyslog_lines }}"
+      register: rsyslog_lines_check
+      ignore_errors: yes
+      changed_when: false
 
-  - name: Bash log dosyası kontrol sonucu
-    ansible.builtin.debug:
-      msg: "{{ 'ok' if bash_log_file.stat.exists else 'yok' }}"
+    - name: QRadar/Audit rsyslog satır sonuçları
+      debug:
+        msg: "Rsyslog.conf {{ item.item }}: {{ 'ok' if item.rc == 0 else 'yok' }}"
+      loop: "{{ rsyslog_lines_check.results }}"
 
-  - name: Rsyslog bash config dosyası mevcut mu kontrol et
-    ansible.builtin.stat:
-      path: /etc/rsyslog.d/bash.conf
-    register: bash_conf_file
+    # 6. 50-default.conf kontrol
+    - name: 50-default.conf log kuralları kontrol
+      shell: "grep -E '{{ item }}' /etc/rsyslog.d/50-default.conf"
+      loop: "{{ default_conf_lines }}"
+      register: default_conf_check
+      ignore_errors: yes
+      changed_when: false
 
-  - name: Bash conf dosyası kontrol sonucu
-    ansible.builtin.debug:
-      msg: "{{ 'ok' if bash_conf_file.stat.exists else 'yok' }}"
-
-  - name: 50-default.conf dosyasının varlığı
-    ansible.builtin.stat:
-      path: /etc/rsyslog.d/50-default.conf
-    register: rsyslog_default_conf
-
-  - name: 50-default.conf kontrol sonucu
-    ansible.builtin.debug:
-      msg: "{{ 'ok' if rsyslog_default_conf.stat.exists else 'yok' }}"
+    - name: 50-default.conf log kuralları sonuçları
+      debug:
+        msg: "50-default.conf {{ item.item }}: {{ 'ok' if item.rc == 0 else 'yok' }}"
+      loop: "{{ default_conf_check.results }}"
