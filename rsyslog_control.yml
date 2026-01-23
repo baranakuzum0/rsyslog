@@ -4,6 +4,9 @@
   become: yes
 
   vars:
+    qradar_ip: "192.168.121.21"
+
+    # Bash log kontrol için regex
     bash_log_entries:
       - regexp: '^PORT='
       - regexp: '^logger -p local5.debug'
@@ -22,23 +25,25 @@
       - regexp: '^\}$'
       - regexp: '^trap history_to_syslog DEBUG'
 
+    # Rsyslog.conf kontrol için
     rsyslog_lines:
-      - regexp: '^\*.\* @@192\.168\.121\.21:514'
-      - regexp: '^\$ModLoad imfile'
-      - regexp: '^\$InputFileName /var/log/audit/audit.log'
-      - regexp: '^\$InputFileTag tag_audit_log_.*'
-      - regexp: '^\$InputFileStateFile audit_log'
-      - regexp: '^\$InputFileSeverity info'
-      - regexp: '^\$InputFileFacility local6'
-      - regexp: '^\$InputRunFileMonitor'
+      - { line: "*.* @@{{ qradar_ip }}:514", regexp: '^\*.\* @@' }
+      - { line: "$ModLoad imfile", regexp: '^\$ModLoad imfile' }
+      - { line: "$InputFileName /var/log/audit/audit.log", regexp: '^\$InputFileName /var/log/audit/audit.log' }
+      - { line: "$InputFileTag tag_audit_log_.*", regexp: '^\$InputFileTag tag_audit_log_.*' }
+      - { line: "$InputFileStateFile audit_log", regexp: '^\$InputFileStateFile audit_log' }
+      - { line: "$InputFileSeverity info", regexp: '^\$InputFileSeverity info' }
+      - { line: "$InputFileFacility local6", regexp: '^\$InputFileFacility local6' }
+      - { line: "$InputRunFileMonitor", regexp: '^\$InputRunFileMonitor' }
 
+    # 50-default.conf kontrol için
     default_conf_lines:
-      - regexp: '^auth,authpriv\.\*'
-      - regexp: '^\*\.\*;auth,authpriv\.none'
-      - regexp: '^cron\.\*'
-      - regexp: '^local1\.\*'
-      - regexp: '^mail\.err'
-      - regexp: '^\*\.emerg'
+      - { line: "auth,authpriv.*                 /var/log/auth.log", regexp: '^auth,authpriv\.\*' }
+      - { line: "*.*;auth,authpriv.none          -/var/log/syslog", regexp: '^\*\.\*;auth,authpriv\.none' }
+      - { line: "cron.*                          /var/log/cron.log", regexp: '^cron\.\*' }
+      - { line: "local1.*                        /var/log/sudo.log", regexp: '^local1\.\*' }
+      - { line: "mail.err                        /var/log/mail.err", regexp: '^mail\.err' }
+      - { line: "*.emerg                         :omusrmsg:*", regexp: '^\*\.emerg' }
 
   tasks:
 
@@ -46,6 +51,7 @@
       shell: "grep -E '{{ item.regexp }}' /etc/profile"
       register: bash_profile_check
       ignore_errors: yes
+      changed_when: false
       loop: "{{ bash_log_entries }}"
       loop_control:
         label: "{{ item.regexp }}"
@@ -54,45 +60,48 @@
       shell: "grep -E '{{ item.regexp }}' /root/.bashrc"
       register: bash_bashrc_check
       ignore_errors: yes
+      changed_when: false
       loop: "{{ bash_log_entries }}"
       loop_control:
         label: "{{ item.regexp }}"
 
-    - name: Rsyslog satırlarını kontrol et (/etc/rsyslog.conf)
-      shell: "grep -E '{{ item.regexp }}' /etc/rsyslog.conf"
-      register: rsyslog_check
-      ignore_errors: yes
-      loop: "{{ rsyslog_lines }}"
-      loop_control:
-        label: "{{ item.regexp }}"
-
-    - name: 50-default.conf satırlarını kontrol et (/etc/rsyslog.d/50-default.conf)
-      shell: "grep -E '{{ item.regexp }}' /etc/rsyslog.d/50-default.conf"
-      register: default_conf_check
-      ignore_errors: yes
-      loop: "{{ default_conf_lines }}"
-      loop_control:
-        label: "{{ item.regexp }}"
-
-    - name: Sonuçları göster (/etc/profile)
+    - name: Eksik satırları göster (/etc/profile)
       debug:
         msg: "Eksik Bash log satırı (profile): {{ item.item.regexp }}"
       loop: "{{ bash_profile_check.results }}"
       when: item.rc != 0
 
-    - name: Sonuçları göster (/root/.bashrc)
+    - name: Eksik satırları göster (/root/.bashrc)
       debug:
         msg: "Eksik Bash log satırı (bashrc): {{ item.item.regexp }}"
       loop: "{{ bash_bashrc_check.results }}"
       when: item.rc != 0
 
-    - name: Sonuçları göster (/etc/rsyslog.conf)
+    - name: Rsyslog.conf eksik satırları kontrol et
+      shell: "grep -E '{{ item.regexp }}' /etc/rsyslog.conf"
+      register: rsyslog_conf_check
+      ignore_errors: yes
+      changed_when: false
+      loop: "{{ rsyslog_lines }}"
+      loop_control:
+        label: "{{ item.regexp }}"
+
+    - name: Eksik satırları göster (rsyslog.conf)
       debug:
         msg: "Eksik Rsyslog satırı: {{ item.item.regexp }}"
-      loop: "{{ rsyslog_check.results }}"
+      loop: "{{ rsyslog_conf_check.results }}"
       when: item.rc != 0
 
-    - name: Sonuçları göster (50-default.conf)
+    - name: 50-default.conf eksik satırları kontrol et
+      shell: "grep -E '{{ item.regexp }}' /etc/rsyslog.d/50-default.conf"
+      register: default_conf_check
+      ignore_errors: yes
+      changed_when: false
+      loop: "{{ default_conf_lines }}"
+      loop_control:
+        label: "{{ item.regexp }}"
+
+    - name: Eksik satırları göster (50-default.conf)
       debug:
         msg: "Eksik 50-default.conf satırı: {{ item.item.regexp }}"
       loop: "{{ default_conf_check.results }}"
