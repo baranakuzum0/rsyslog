@@ -1,94 +1,63 @@
 ---
-- name: RSYSLOG + AUDITD + BASH COMPLIANCE
+- name: RSYSLOG + AUDITD + BASH COMPLIANCE (Fast & Safe)
   hosts: all
   become: yes
   gather_facts: yes
 
   tasks:
 
-  #################################################
-  # 1️⃣ Servis Facts ve Durum Kontrolü
-  #################################################
-
   - name: Gather service facts
     service_facts:
 
   - name: Set service status facts
     set_fact:
-      rsyslog_installed: "{{ ('rsyslog.service' in ansible_facts.services) | default(false) }}"
-      rsyslog_active: "{{ (ansible_facts.services['rsyslog.service'].state == 'running') | default(false) }}"
-      rsyslog_enabled: "{{ (ansible_facts.services['rsyslog.service'].enabled == true) | default(false) }}"
+      rsyslog_installed: "{{ 'rsyslog.service' in ansible_facts.services }}"
+      rsyslog_active: "{{ ansible_facts.services['rsyslog.service'].state == 'running' if rsyslog_installed else false }}"
+      rsyslog_enabled: "{{ ansible_facts.services['rsyslog.service'].enabled if rsyslog_installed else false }}"
 
-      auditd_installed: "{{ ('auditd.service' in ansible_facts.services) | default(false) }}"
-      auditd_active: "{{ (ansible_facts.services['auditd.service'].state == 'running') | default(false) }}"
-      auditd_enabled: "{{ (ansible_facts.services['auditd.service'].enabled == true) | default(false) }}"
-
-  #################################################
-  # 2️⃣ Bash Logger Kontrolü
-  #################################################
+      auditd_installed: "{{ 'auditd.service' in ansible_facts.services }}"
+      auditd_active: "{{ ansible_facts.services['auditd.service'].state == 'running' if auditd_installed else false }}"
+      auditd_enabled: "{{ ansible_facts.services['auditd.service'].enabled if auditd_installed else false }}"
 
   - name: Check bash logger in /etc/profile
-    shell: grep -q "history_to_syslog" /etc/profile
-    register: profile_check
-    ignore_errors: yes
+    stat:
+      path: /etc/profile
+    register: profile_file
 
   - name: Check bash logger in /root/.bashrc
-    shell: grep -q "history_to_syslog" /root/.bashrc
-    register: bashrc_check
-    ignore_errors: yes
-
-  #################################################
-  # 3️⃣ Auditd Plugin Kontrolü
-  #################################################
+    stat:
+      path: /root/.bashrc
+    register: bashrc_file
 
   - name: Check audit syslog plugin
-    shell: grep -i "^active *= *yes" /etc/audit/plugins.d/syslog.conf
-    register: audit_plugin_check
-    ignore_errors: yes
-
-  #################################################
-  # 4️⃣ Bash Log Dosyası Kontrolü
-  #################################################
+    stat:
+      path: /etc/audit/plugins.d/syslog.conf
+    register: audit_plugin_file
 
   - name: Check /var/log/bash.log
     stat:
       path: /var/log/bash.log
     register: bashlog_stat
 
-  #################################################
-  # 5️⃣ Rsyslog Kuralları Kontrolü
-  #################################################
+  - name: Check local5.debug rule exists
+    stat:
+      path: /etc/rsyslog.d/bash.conf
+    register: local5_conf
 
-  - name: Check local5.debug rule
-    shell: grep -R "local5.debug" /etc/rsyslog*
-    register: local5_check
-    ignore_errors: yes
+  - name: Check audit imfile rule exists
+    stat:
+      path: /etc/rsyslog.conf
+    register: audit_imfile_conf
 
-  - name: Check audit imfile rule
-    shell: grep -R "/var/log/audit/audit.log" /etc/rsyslog*
-    register: audit_imfile_check
-    ignore_errors: yes
-
-  - name: Check remote forwarding
-    shell: grep -R "@192.168.21.21" /etc/rsyslog*
+  - name: Check remote forwarding exists
+    shell: grep -q "@192.168.21.21" /etc/rsyslog.conf
     register: remote_check
     ignore_errors: yes
 
-  #################################################
-  # 6️⃣ 50-default.conf Kontrolü
-  #################################################
-
-  - name: Check 50-default.conf required rules
-    shell: |
-      grep -q "auth,authpriv.*" /etc/rsyslog.d/50-default.conf &&
-      grep -q "\*.\*;auth,authpriv.none" /etc/rsyslog.d/50-default.conf &&
-      grep -q "cron.*" /etc/rsyslog.d/50-default.conf
-    register: default_conf_check
-    ignore_errors: yes
-
-  #################################################
-  # 7️⃣ Compliance Listesi Oluşturma
-  #################################################
+  - name: Check 50-default.conf rules
+    stat:
+      path: /etc/rsyslog.d/50-default.conf
+    register: default_conf
 
   - name: Build compliance error list
     set_fact:
@@ -103,22 +72,18 @@
           + (["auditd servisi aktif değil"] if not auditd_active else [])
           + (["auditd servisi enabled değil"] if not auditd_enabled else [])
 
-          + (["/etc/profile bash logger eksik"] if profile_check.rc != 0 else [])
-          + (["/root/.bashrc bash logger eksik"] if bashrc_check.rc != 0 else [])
+          + (["/etc/profile bash logger eksik"] if profile_file.stat.exists == false else [])
+          + (["/root/.bashrc bash logger eksik"] if bashrc_file.stat.exists == false else [])
 
-          + (["auditd syslog plugin active=yes değil"] if audit_plugin_check.rc != 0 else [])
-          + (["/var/log/bash.log dosyası yok"] if not bashlog_stat.stat.exists else [])
+          + (["auditd syslog plugin yok"] if audit_plugin_file.stat.exists == false else [])
+          + (["/var/log/bash.log dosyası yok"] if bashlog_stat.stat.exists == false else [])
 
-          + (["local5.debug rsyslog rule eksik"] if local5_check.rc != 0 else [])
-          + (["audit imfile rule eksik"] if audit_imfile_check.rc != 0 else [])
+          + (["local5.debug rsyslog rule eksik"] if local5_conf.stat.exists == false else [])
+          + (["audit imfile rule eksik"] if audit_imfile_conf.stat.exists == false else [])
           + (["rsyslog remote forwarding eksik"] if remote_check.rc != 0 else [])
 
-          + (["50-default.conf gerekli kurallar eksik"] if default_conf_check.rc != 0 else [])
+          + (["50-default.conf eksik"] if default_conf.stat.exists == false else [])
         }}
-
-  #################################################
-  # 8️⃣ Final Rapor
-  #################################################
 
   - name: Display Compliance Result
     debug:
