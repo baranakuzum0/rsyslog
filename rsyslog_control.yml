@@ -1,131 +1,251 @@
----
-- name: RSYSLOG + AUDITD + BASH COMPLIANCE CHECK
+- name: Check RSYSLOG + Auditd + Bash Log Configuration
   hosts: all
+  gather_facts: true
   become: yes
-  gather_facts: yes
-
   vars:
-    rsyslog_service: rsyslog.service
-    auditd_service: auditd.service
-    audit_plugin_paths:
+    required_packages:
+      - auditd
+      - rsyslog
+    auditd_plugin_paths:
       - /etc/audisp/plugins.d/syslog.conf
       - /etc/audit/plugins.d/syslog.conf
 
   tasks:
+    - name: Check if required packages are installed
+      ansible.builtin.package:
+        name: "{{ item }}"
+        state: present
+      check_mode: yes
+      register: package_check
+      loop: "{{ required_packages }}"
+      ignore_errors: yes
 
-  - name: Check if rsyslog service exists
-    service_facts:
+    - name: Check service status
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      check_mode: yes
+      register: service_status
+      loop:
+        - rsyslog.service
+        - auditd.service
+      ignore_errors: yes
 
-  - name: Check auditd service exists
-    service_facts:
+    - name: Check which auditd plugin path exists
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ auditd_plugin_paths }}"
+      register: auditd_plugin_stat
+      ignore_errors: yes
 
-  - name: Set service and package facts
-    set_fact:
-      rsyslog_installed: "{{ rsyslog_service in ansible_facts.services }}"
-      rsyslog_active: "{{ ansible_facts.services[rsyslog_service].state == 'running' if rsyslog_installed else false }}"
-      rsyslog_enabled: "{{ ansible_facts.services[rsyslog_service].enabled if rsyslog_installed else false }}"
+    - name: Set auditd plugin path fact
+      set_fact:
+        auditd_plugin_path: "{{ item.stat.path }}"
+      loop: "{{ auditd_plugin_stat.results }}"
+      when: item.stat is defined and item.stat.exists
 
-      auditd_installed: "{{ auditd_service in ansible_facts.services }}"
-      auditd_active: "{{ ansible_facts.services[auditd_service].state == 'running' if auditd_installed else false }}"
-      auditd_enabled: "{{ ansible_facts.services[auditd_service].enabled if auditd_installed else false }}"
+    - name: Check if auditd syslog plugin is enabled (if path exists)
+      ansible.builtin.lineinfile:
+        path: "{{ auditd_plugin_path }}"
+        regexp: '^active\s*=\s*yes'
+        line: 'active = yes'
+        state: present
+      check_mode: yes
+      register: auditd_syslog_check
+      when: auditd_plugin_path is defined
+      ignore_errors: yes
 
-  - name: Check /etc/profile exists
-    stat:
-      path: /etc/profile
-    register: profile_file
+    - name: Check bash logging in /etc/profile
+      ansible.builtin.lineinfile:
+        path: /etc/profile
+        regexp: '.*logger -p local5\.debug.*'
+        line: '# Bash logging should be present'
+        state: present
+      check_mode: yes
+      register: profile_bash_check
+      ignore_errors: yes
 
-  - name: Check /root/.bashrc exists
-    stat:
-      path: /root/.bashrc
-    register: bashrc_file
+    - name: Check bash logging in /root/.bashrc
+      ansible.builtin.lineinfile:
+        path: /root/.bashrc
+        regexp: '.*logger -p local5\.debug.*'
+        line: '# Bash logging should be present'
+        state: present
+      check_mode: yes
+      register: bashrc_check
+      ignore_errors: yes
 
-  - name: Find auditd plugin file
-    stat:
-      path: "{{ item }}"
-    loop: "{{ audit_plugin_paths }}"
-    register: audit_plugin_stat
+    - name: Check rsyslog remote forwarding configuration
+      ansible.builtin.lineinfile:
+        path: /etc/rsyslog.conf
+        regexp: 'local5\.\*,local6\.\*\s+@192\.168\.21\.21'
+        line: 'local5.*,local6.* @192.168.21.21'
+        state: present
+      check_mode: yes
+      register: rsyslog_remote_check
+      ignore_errors: yes
 
-  - name: Set auditd plugin path
-    set_fact:
-      auditd_plugin_path: "{{ item.stat.path }}"
-    loop: "{{ audit_plugin_stat.results }}"
-    when: item.stat.exists
+    - name: Check auditd log forwarding in rsyslog.conf
+      ansible.builtin.blockinfile:
+        path: /etc/rsyslog.conf
+        marker: "# {mark} ANSIBLE MANAGED AUDITD BLOCK"
+        block: |
+          # audit log
+          $ModLoad imfile
+          $InputFileName /var/log/audit/audit.log
+          $InputFileTag tag_audit_log_.$hostname:
+          $InputFileStateFile audit_log
+          $InputFileSeverity info
+          $InputFileFacility local6
+          $InputRunFileMonitor
+        state: present
+      check_mode: yes
+      register: rsyslog_auditd_check
+      ignore_errors: yes
 
-  - name: Check auditd plugin active
-    lineinfile:
-      path: "{{ auditd_plugin_path }}"
-      regexp: '^active\s*=\s*yes'
-      line: 'active = yes'
-      state: present
-    check_mode: yes
-    register: auditd_syslog_check
-    when: auditd_plugin_path is defined
-    ignore_errors: yes
+    - name: Check bash log file existence
+      ansible.builtin.stat:
+        path: /var/log/bash.log
+      register: bash_log_file
 
-  - name: Check /var/log/bash.log
-    stat:
-      path: /var/log/bash.log
-    register: bashlog_stat
+    - name: Check rsyslog bash configuration
+      ansible.builtin.lineinfile:
+        path: /etc/rsyslog.d/bash.conf
+        regexp: 'local5\.debug\s+/var/log/bash\.log'
+        line: 'local5.debug                /var/log/bash.log'
+        state: present
+      check_mode: yes
+      register: bash_conf_check
+      ignore_errors: yes
 
-  - name: Check /etc/rsyslog.d/bash.conf
-    stat:
-      path: /etc/rsyslog.d/bash.conf
-    register: local5_conf
+    - name: Check 50-default.conf configuration
+      ansible.builtin.lineinfile:
+        path: /etc/rsyslog.d/50-default.conf
+        regexp: '{{ item.regex }}'
+        line: '{{ item.line }}'
+        state: present
+      check_mode: yes
+      register: default_conf_check
+      loop:
+        - { regex: 'auth,authpriv\.\*\s+/var/log/auth\.log', line: 'auth,authpriv.*                 /var/log/auth.log', name: 'auth.log' }
+        - { regex: '\*\.\*;auth,authpriv\.none\s+-/var/log/syslog', line: '*.*;auth,authpriv.none          -/var/log/syslog', name: 'syslog' }
+        - { regex: 'cron\.\*\s+/var/log/cron\.log', line: 'cron.*                          /var/log/cron.log', name: 'cron.log' }
+      ignore_errors: yes
 
-  - name: Check /etc/rsyslog.conf for audit imfile block
-    stat:
-      path: /etc/rsyslog.conf
-    register: audit_imfile_conf
+    - name: Check for actual log entries in bash.log
+      ansible.builtin.shell: |
+        if [ -f /var/log/bash.log ] && [ "$(cat /var/log/bash.log | wc -l)" -gt 0 ]; then
+          echo "✅ Log kayıtları var (son 3 satır):"
+          tail -3 /var/log/bash.log | sed 's/^/    /'
+        else
+          echo "❌ Henüz log kaydı yok"
+        fi
+      register: bash_log_entries
+      changed_when: false
+      ignore_errors: yes
 
-  - name: Check /etc/rsyslog.conf for remote forward
-    stat:
-      path: /etc/rsyslog.conf
-    register: rsyslog_conf_file
+    - name: Set package status facts
+      set_fact:
+        package_status: "{{ package_status | default({}) | combine({item.item: '✅' if not item.changed else '❌'}) }}"
+      loop: "{{ package_check.results }}"
+      when: package_check.results is defined
 
-  - name: Check remote forwarding (local5.*,local6.* @192.168.21.21)
-    shell: grep -q 'local5.*,local6.* *@192.168.21.21' /etc/rsyslog.conf
-    register: remote_check
-    ignore_errors: yes
+    - name: Set service status facts
+      set_fact:
+        service_active: "{{ service_active | default({}) | combine({item.item: '✅' if item.status.ActiveState == 'active' else '❌'}) }}"
+        service_enabled: "{{ service_enabled | default({}) | combine({item.item: '✅' if item.status.UnitFileState == 'enabled' else '❌'}) }}"
+      loop: "{{ service_status.results }}"
+      when: service_status.results is defined
 
-  - name: Check 50-default.conf exists
-    stat:
-      path: /etc/rsyslog.d/50-default.conf
-    register: default_conf
+    - name: Set default conf status facts
+      set_fact:
+        default_conf_status: "{{ default_conf_status | default({}) | combine({item.item.name: '✅' if not item.changed else '❌'}) }}"
+      loop: "{{ default_conf_check.results }}"
+      when: default_conf_check.results is defined
 
-  - name: Build compliance report
-    set_fact:
-      compliance_errors: >-
-        {{
-          []
-          + (["rsyslog servisi kurulu değil"] if not rsyslog_installed else [])
-          + (["rsyslog servisi aktif değil"] if not rsyslog_active else [])
-          + (["rsyslog servisi enabled değil"] if not rsyslog_enabled else [])
-          + (["auditd servisi kurulu değil"] if not auditd_installed else [])
-          + (["auditd servisi aktif değil"] if not auditd_active else [])
-          + (["auditd servisi enabled değil"] if not auditd_enabled else [])
-          + (["/etc/profile bash logger eksik"] if profile_file.stat.exists == false else [])
-          + (["/root/.bashrc bash logger eksik"] if bashrc_file.stat.exists == false else [])
-          + (["auditd syslog plugin yok"] if auditd_plugin_path is not defined else [])
-          + (["/var/log/bash.log dosyası yok"] if bashlog_stat.stat.exists == false else [])
-          + (["/etc/rsyslog.d/bash.conf eksik"] if local5_conf.stat.exists == false else [])
-          + (["/etc/rsyslog.conf audit imfile yok"] if audit_imfile_conf.stat.exists == false else [])
-          + (["rsyslog remote forwarding eksik"] if remote_check.rc != 0 else [])
-          + (["50-default.conf eksik"] if default_conf.stat.exists == false else [])
-        }}
+    - name: Set auditd plugin status fact
+      set_fact:
+        auditd_plugin_status: >-
+          {% if auditd_plugin_path is not defined %}
+          ❌
+          {% elif auditd_syslog_check is defined and not auditd_syslog_check.changed %}
+          ✅
+          {% else %}
+          ❌
+          {% endif %}
+        auditd_plugin_path_display: "{{ auditd_plugin_path | default('Bulunamadı') }}"
 
-  - name: Display Compliance Result
-    debug:
-      msg: |
-        ======================================================
-        RSYSLOG + AUDITD + BASH COMPLIANCE RAPORU
-        ======================================================
+    - name: Set bash log lines fact
+      set_fact:
+        bash_log_lines: "{{ bash_log_entries.stdout_lines | default([]) }}"
 
-        {% if compliance_errors | length == 0 %}
-        🎉 Tüm maddeler eksiksiz uygulanmış.
-        {% else %}
-        ❌ Eksik / Hatalı Konfigürasyonlar:
-
-        {% for item in compliance_errors %}
-        - {{ item }}
-        {% endfor %}
-        {% endif %}
+    - name: Display comprehensive configuration report
+      ansible.builtin.debug:
+        msg: 
+          - "╔══════════════════════════════════════════════════════════════════════╗"
+          - "║         RSYSLOG + AUDITD + BASH LOG KONFIGÜRASYON RAPORU            ║"
+          - "╚══════════════════════════════════════════════════════════════════════╝"
+          - ""
+          - "┌────────────────────────────────────────────────────────────────┐"
+          - "│ 📦 PAKETLER                                                     │"
+          - "├────────────────────────────────────────────────────────────────┤"
+          - "│   auditd  : [{{ package_status['auditd'] | default('❌') }}] {{ 'Kurulu' if package_status['auditd'] == '✅' else 'Kurulu Değil' }}"
+          - "│   rsyslog : [{{ package_status['rsyslog'] | default('❌') }}] {{ 'Kurulu' if package_status['rsyslog'] == '✅' else 'Kurulu Değil' }}"
+          - "└────────────────────────────────────────────────────────────────┘"
+          - ""
+          - "┌────────────────────────────────────────────────────────────────┐"
+          - "│ ⚙️ SERVİSLER                                                    │"
+          - "├────────────────────────────────────────────────────────────────┤"
+          - "│   rsyslog.service :"
+          - "│     • Aktif   : [{{ service_active['rsyslog.service'] | default('❌') }}] {{ 'Çalışıyor' if service_active['rsyslog.service'] == '✅' else 'Çalışmıyor' }}"
+          - "│     • Enabled : [{{ service_enabled['rsyslog.service'] | default('❌') }}] {{ 'Aktif' if service_enabled['rsyslog.service'] == '✅' else 'Pasif' }}"
+          - "│"
+          - "│   auditd.service :"
+          - "│     • Aktif   : [{{ service_active['auditd.service'] | default('❌') }}] {{ 'Çalışıyor' if service_active['auditd.service'] == '✅' else 'Çalışmıyor' }}"
+          - "│     • Enabled : [{{ service_enabled['auditd.service'] | default('❌') }}] {{ 'Aktif' if service_enabled['auditd.service'] == '✅' else 'Pasif' }}"
+          - "└────────────────────────────────────────────────────────────────┘"
+          - ""
+          - "┌────────────────────────────────────────────────────────────────┐"
+          - "│ 🔧 AUDITD KONFIGÜRASYONU                                        │"
+          - "├────────────────────────────────────────────────────────────────┤"
+          - "│   Syslog plugin : [{{ auditd_plugin_status }}] {{ 'Aktif' if auditd_plugin_status == '✅' else 'Aktif Değil' }}"
+          - "│   Plugin yolu   : {{ auditd_plugin_path_display }}"
+          - "└────────────────────────────────────────────────────────────────┘"
+          - ""
+          - "┌────────────────────────────────────────────────────────────────┐"
+          - "│ 🐚 BASH LOG KONFIGÜRASYONU                                      │"
+          - "├────────────────────────────────────────────────────────────────┤"
+          - "│   /etc/profile     : [{{ '✅' if not profile_bash_check.changed else '❌' }}] {{ 'Yapılandırılmış' if not profile_bash_check.changed else 'Yapılandırılmamış' }}"
+          - "│   /root/.bashrc    : [{{ '✅' if not bashrc_check.changed else '❌' }}] {{ 'Yapılandırılmış' if not bashrc_check.changed else 'Yapılandırılmamış' }}"
+          - "│   /var/log/bash.log: [{{ '✅' if bash_log_file.stat.exists else '❌' }}] {{ 'Mevcut' if bash_log_file.stat.exists else 'Mevcut Değil' }}"
+          - "│   bash.conf        : [{{ '✅' if not bash_conf_check.changed else '❌' }}] {{ 'Mevcut' if not bash_conf_check.changed else 'Mevcut Değil' }}"
+          - "└────────────────────────────────────────────────────────────────┘"
+          - ""
+          - "┌────────────────────────────────────────────────────────────────┐"
+          - "│ 📡 RSYSLOG KONFIGÜRASYONU                                       │"
+          - "├────────────────────────────────────────────────────────────────┤"
+          - "│   Remote forward (192.168.21.21) : [{{ '✅' if not rsyslog_remote_check.changed else '❌' }}] {{ 'Yapılandırılmış' if not rsyslog_remote_check.changed else 'Yapılandırılmamış' }}"
+          - "│   Auditd log forwarding          : [{{ '✅' if not rsyslog_auditd_check.changed else '❌' }}] {{ 'Yapılandırılmış' if not rsyslog_auditd_check.changed else 'Yapılandırılmamış' }}"
+          - "└────────────────────────────────────────────────────────────────┘"
+          - ""
+          - "┌────────────────────────────────────────────────────────────────┐"
+          - "│ 📋 50-default.conf KONTROLÜ                                     │"
+          - "├────────────────────────────────────────────────────────────────┤"
+          - "│   auth.log  : [{{ default_conf_status['auth.log'] | default('❌') }}] {{ 'Yapılandırılmış' if default_conf_status['auth.log'] == '✅' else 'Yapılandırılmamış' }}"
+          - "│   syslog    : [{{ default_conf_status['syslog'] | default('❌') }}] {{ 'Yapılandırılmış' if default_conf_status['syslog'] == '✅' else 'Yapılandırılmamış' }}"
+          - "│   cron.log  : [{{ default_conf_status['cron.log'] | default('❌') }}] {{ 'Yapılandırılmış' if default_conf_status['cron.log'] == '✅' else 'Yapılandırılmamış' }}"
+          - "└────────────────────────────────────────────────────────────────┘"
+          - ""
+          - "┌────────────────────────────────────────────────────────────────┐"
+          - "│ 📝 BASH LOG KAYITLARI                                           │"
+          - "├────────────────────────────────────────────────────────────────┤"
+          - "│   {{ bash_log_lines[0] | default('') }}"
+          - "│   {{ bash_log_lines[1] | default('') }}"
+          - "│   {{ bash_log_lines[2] | default('') }}"
+          - "│   {{ bash_log_lines[3] | default('') }}"
+          - "└────────────────────────────────────────────────────────────────┘"
+          - ""
+          - "╔══════════════════════════════════════════════════════════════════════╗"
+          - "║                      ✅ = Tamam  ❌ = Eksik/Hatalı                   ║"
+          - "╚══════════════════════════════════════════════════════════════════════╝"
