@@ -6,6 +6,9 @@
     required_packages:
       - auditd
       - rsyslog
+    auditd_plugin_paths:
+      - /etc/audisp/plugins.d/syslog.conf
+      - /etc/audit/plugins.d/syslog.conf
 
   tasks:
     - name: Check if required packages are installed
@@ -29,14 +32,28 @@
         - auditd.service
       ignore_errors: yes
 
-    - name: Check if auditd syslog plugin is enabled
+    - name: Check which auditd plugin path exists
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ auditd_plugin_paths }}"
+      register: auditd_plugin_stat
+      ignore_errors: yes
+
+    - name: Set auditd plugin path fact
+      set_fact:
+        auditd_plugin_path: "{{ item.stat.path }}"
+      loop: "{{ auditd_plugin_stat.results }}"
+      when: item.stat is defined and item.stat.exists
+
+    - name: Check if auditd syslog plugin is enabled (if path exists)
       ansible.builtin.lineinfile:
-        path: /etc/audisp/plugins.d/syslog.conf
+        path: "{{ auditd_plugin_path }}"
         regexp: '^active\s*=\s*yes'
         line: 'active = yes'
         state: present
       check_mode: yes
       register: auditd_syslog_check
+      when: auditd_plugin_path is defined
       ignore_errors: yes
 
     - name: Check bash logging in /etc/profile
@@ -146,6 +163,17 @@
       loop: "{{ default_conf_check.results }}"
       when: default_conf_check.results is defined
 
+    - name: Set auditd plugin status fact
+      set_fact:
+        auditd_plugin_status: >-
+          {% if auditd_plugin_path is not defined %}
+          ❌ Dosya yok
+          {% elif auditd_syslog_check is defined and not auditd_syslog_check.changed %}
+          ✅ Aktif
+          {% else %}
+          ❌ Aktif değil
+          {% endif %}
+
     - name: Display comprehensive configuration report
       ansible.builtin.debug:
         msg: 
@@ -166,7 +194,10 @@
           - "      - Enabled  : {{ service_enabled['auditd.service'] | default('❌ Bilinmiyor') }}"
           - ""
           - "🔧 AUDITD KONFIGÜRASYONU:"
-          - "  • Syslog plugin : {{ '✅ Aktif' if not auditd_syslog_check.changed else '❌ Aktif değil' }}"
+          - "  • Syslog plugin : {{ auditd_plugin_status }}"
+          {% if auditd_plugin_path is defined %}
+          - "    ({{ auditd_plugin_path }})"
+          {% endif %}
           - ""
           - "🐚 BASH LOG KONFIGÜRASYONU:"
           - "  • /etc/profile     : {{ '✅ Var' if not profile_bash_check.changed else '❌ Yok' }}"
