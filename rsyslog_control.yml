@@ -1,162 +1,183 @@
 ---
-- name: RSYSLOG + Auditd + Bash Log Read-Only Compliance Check
+- name: RSYSLOG + AUDITD + BASH DOC COMPLIANCE CHECK
   hosts: all
-  gather_facts: false
   become: yes
+  gather_facts: false
 
   vars:
-    remote_log_server: "192.168.21.21"
+    remote_ip: "192.168.21.21"
+    missing_items: []
 
   tasks:
 
-  ############################################################
-  # PACKAGE CHECK (REAL CHECK)
-  ############################################################
+  ################################################
+  # SERVICE CHECK
+  ################################################
 
-  - name: Check installed packages
-    shell: "rpm -q {{ item }}"
-    register: pkg_check
-    loop:
-      - auditd
-      - rsyslog
+  - service_facts:
+
+  - name: Check auditd installed
+    set_fact:
+      missing_items: "{{ missing_items + ['auditd servisi kurulu değil'] }}"
+    when: "'auditd.service' not in ansible_facts.services"
+
+  - name: Check rsyslog installed
+    set_fact:
+      missing_items: "{{ missing_items + ['rsyslog servisi kurulu değil'] }}"
+    when: "'rsyslog.service' not in ansible_facts.services"
+
+  - name: Check auditd active
+    set_fact:
+      missing_items: "{{ missing_items + ['auditd servisi çalışmıyor'] }}"
+    when:
+      - "'auditd.service' in ansible_facts.services"
+      - ansible_facts.services['auditd.service'].state != "running"
+
+  - name: Check rsyslog active
+    set_fact:
+      missing_items: "{{ missing_items + ['rsyslog servisi çalışmıyor'] }}"
+    when:
+      - "'rsyslog.service' in ansible_facts.services"
+      - ansible_facts.services['rsyslog.service'].state != "running"
+
+  ################################################
+  # BASH LOGGER CHECK
+  ################################################
+
+  - name: Check /etc/profile logger
+    shell: grep "logger -p local5.debug" /etc/profile
+    register: profile_check
     changed_when: false
     failed_when: false
 
-  - name: Set package facts
+  - name: Add missing profile config
     set_fact:
-      package_status: "{{ package_status | default({}) | combine({item.item: ('✅' if item.rc == 0 else '❌')}) }}"
-    loop: "{{ pkg_check.results }}"
+      missing_items: "{{ missing_items + ['/etc/profile içinde bash logger kodu yok'] }}"
+    when: profile_check.rc != 0
 
-  ############################################################
-  # SERVICE CHECK (NO BLOCKING)
-  ############################################################
+  - name: Check /root/.bashrc logger
+    shell: grep "logger -p local5.debug" /root/.bashrc
+    register: bashrc_check
+    changed_when: false
+    failed_when: false
 
-  - name: Gather service facts
-    service_facts:
-
-  - name: Set service facts
+  - name: Add missing bashrc config
     set_fact:
-      service_active: "{{ service_active | default({}) | combine({item: ('✅' if ansible_facts.services[item].state == 'running' else '❌')}) }}"
-      service_enabled: "{{ service_enabled | default({}) | combine({item: ('✅' if ansible_facts.services[item].status == 'enabled' else '❌')}) }}"
-    loop:
-      - rsyslog.service
-      - auditd.service
-    when: ansible_facts.services[item] is defined
+      missing_items: "{{ missing_items + ['/root/.bashrc içinde bash logger kodu yok'] }}"
+    when: bashrc_check.rc != 0
 
-  ############################################################
-  # AUDITD PLUGIN CHECK
-  ############################################################
+  ################################################
+  # AUDIT PLUGIN CHECK
+  ################################################
 
-  - name: Detect auditd syslog plugin path
+  - name: Detect audit plugin file
     shell: |
       if [ -f /etc/audisp/plugins.d/syslog.conf ]; then
         echo /etc/audisp/plugins.d/syslog.conf
       elif [ -f /etc/audit/plugins.d/syslog.conf ]; then
         echo /etc/audit/plugins.d/syslog.conf
       fi
-    register: auditd_plugin_path
+    register: audit_plugin
     changed_when: false
 
-  - name: Check auditd plugin active status
-    shell: "grep '^active' {{ auditd_plugin_path.stdout }}"
-    register: auditd_plugin_check
-    changed_when: false
-    failed_when: false
-    when: auditd_plugin_path.stdout != ""
-
-  - name: Set auditd plugin fact
+  - name: Missing audit plugin file
     set_fact:
-      auditd_plugin_status: >-
-        {% if auditd_plugin_path.stdout == "" %}
-        ❌
-        {% elif 'yes' in auditd_plugin_check.stdout %}
-        ✅
-        {% else %}
-        ❌
-        {% endif %}
-      auditd_plugin_path_display: "{{ auditd_plugin_path.stdout | default('Bulunamadı') }}"
+      missing_items: "{{ missing_items + ['audit syslog plugin dosyası yok'] }}"
+    when: audit_plugin.stdout == ""
 
-  ############################################################
-  # BASH LOG CHECK
-  ############################################################
-
-  - name: Check bash logger in profile
-    shell: "grep 'logger -p local5.debug' /etc/profile"
-    register: profile_check
+  - name: Check active=yes
+    shell: grep "^active = yes" {{ audit_plugin.stdout }}
+    register: audit_active
     changed_when: false
     failed_when: false
+    when: audit_plugin.stdout != ""
 
-  - name: Check bash logger in root bashrc
-    shell: "grep 'logger -p local5.debug' /root/.bashrc"
-    register: bashrc_check
-    changed_when: false
-    failed_when: false
+  - name: Audit plugin not active
+    set_fact:
+      missing_items: "{{ missing_items + ['audit syslog plugin active = yes değil'] }}"
+    when:
+      - audit_plugin.stdout != ""
+      - audit_active.rc != 0
 
-  - name: Check bash.log file
-    stat:
-      path: /var/log/bash.log
-    register: bash_log_file
+  ################################################
+  # RSYSLOG CHECK
+  ################################################
 
-  - name: Check bash log entries
-    shell: "tail -3 /var/log/bash.log"
-    register: bash_log_entries
-    changed_when: false
-    failed_when: false
-    when: bash_log_file.stat.exists
-
-  ############################################################
-  # RSYSLOG CONFIG CHECK
-  ############################################################
-
-  - name: Check remote forwarding
-    shell: "grep '{{ remote_log_server }}' /etc/rsyslog.conf"
+  - name: Check remote forward
+    shell: grep "{{ remote_ip }}" /etc/rsyslog.conf
     register: remote_check
     changed_when: false
     failed_when: false
 
-  - name: Validate rsyslog config syntax
-    shell: "rsyslogd -N1"
-    register: rsyslog_validate
+  - name: Missing remote forwarding
+    set_fact:
+      missing_items: "{{ missing_items + ['rsyslog remote forwarding eksik'] }}"
+    when: remote_check.rc != 0
+
+  - name: Check imfile block
+    shell: grep "InputFileName /var/log/audit/audit.log" /etc/rsyslog.conf
+    register: imfile_check
     changed_when: false
     failed_when: false
 
-  ############################################################
-  # REPORT
-  ############################################################
+  - name: Missing imfile config
+    set_fact:
+      missing_items: "{{ missing_items + ['rsyslog audit imfile konfigürasyonu eksik'] }}"
+    when: imfile_check.rc != 0
 
-  - name: Display Report
+  ################################################
+  # BASH LOG FILE
+  ################################################
+
+  - stat:
+      path: /var/log/bash.log
+    register: bashlog
+
+  - name: Missing bash.log
+    set_fact:
+      missing_items: "{{ missing_items + ['/var/log/bash.log dosyası yok'] }}"
+    when: not bashlog.stat.exists
+
+  ################################################
+  # DEFAULT CONF CHECK
+  ################################################
+
+  - name: Check 50-default rules
+    shell: grep "{{ item }}" /etc/rsyslog.d/50-default.conf
+    loop:
+      - "auth,authpriv.*"
+      - "*.*;auth,authpriv.none"
+      - "cron.*"
+      - "local1.*"
+      - "mail.err"
+      - "*.emerg"
+    register: default_rules
+    changed_when: false
+    failed_when: false
+
+  - name: Collect missing default rules
+    set_fact:
+      missing_items: "{{ missing_items + ['50-default.conf içinde eksik kural: ' + item.item] }}"
+    loop: "{{ default_rules.results }}"
+    when: item.rc != 0
+
+  ################################################
+  # FINAL REPORT
+  ################################################
+
+  - name: Display Compliance Result
     debug:
-      msg:
-        - "════════════════════════════════════════════"
-        - "RSYSLOG + AUDITD + BASH COMPLIANCE REPORT"
-        - "════════════════════════════════════════════"
-        - ""
-        - "📦 PACKAGES"
-        - "  auditd  : {{ package_status['auditd'] }}"
-        - "  rsyslog : {{ package_status['rsyslog'] }}"
-        - ""
-        - "⚙️ SERVICES"
-        - "  rsyslog.service"
-        - "     Active  : {{ service_active['rsyslog.service'] | default('❌') }}"
-        - "     Enabled : {{ service_enabled['rsyslog.service'] | default('❌') }}"
-        - "  auditd.service"
-        - "     Active  : {{ service_active['auditd.service'] | default('❌') }}"
-        - "     Enabled : {{ service_enabled['auditd.service'] | default('❌') }}"
-        - ""
-        - "🔧 AUDITD"
-        - "  Plugin Path  : {{ auditd_plugin_path_display }}"
-        - "  Plugin Active: {{ auditd_plugin_status }}"
-        - ""
-        - "🐚 BASH LOG"
-        - "  /etc/profile : {{ '✅' if profile_check.rc == 0 else '❌' }}"
-        - "  /root/.bashrc: {{ '✅' if bashrc_check.rc == 0 else '❌' }}"
-        - "  bash.log     : {{ '✅' if bash_log_file.stat.exists else '❌' }}"
-        - ""
-        - "📡 RSYSLOG"
-        - "  Remote Forward: {{ '✅' if remote_check.rc == 0 else '❌' }}"
-        - "  Config Syntax : {{ '✅' if 'error' not in rsyslog_validate.stderr else '❌' }}"
-        - ""
-        - "📝 Sample Logs"
-        - "  {{ bash_log_entries.stdout | default('Log yok') }}"
-        - ""
-        - "════════════════════════════════════════════"
+      msg: |
+        ======================================================
+        RSYSLOG + AUDITD + BASH DOC COMPLIANCE RAPORU
+        ======================================================
+
+        {% if missing_items | length == 0 %}
+        ✅ Sistem dokümana tamamen uygun.
+        {% else %}
+        ❌ Eksik / Hatalı Konfigürasyonlar:
+
+        {% for item in missing_items %}
+        - {{ item }}
+        {% endfor %}
+        {% endif %}
