@@ -1,5 +1,5 @@
 ---
-- name: RSYSLOG + AUDITD + BASH DOC COMPLIANCE
+- name: RSYSLOG + AUDITD + BASH COMPLIANCE
   hosts: all
   become: yes
   gather_facts: yes
@@ -7,7 +7,7 @@
   tasks:
 
   #################################################
-  # 1️⃣ Service Kontrolü
+  # 1️⃣ Servis Facts ve Durum Kontrolü
   #################################################
 
   - name: Gather service facts
@@ -15,16 +15,16 @@
 
   - name: Set service status facts
     set_fact:
-      rsyslog_installed: "{{ 'rsyslog.service' in ansible_facts.services }}"
-      rsyslog_active: "{{ ansible_facts.services['rsyslog.service'].state == 'running' if rsyslog_installed else false }}"
-      rsyslog_enabled: "{{ ansible_facts.services['rsyslog.service'].status == 'enabled' if rsyslog_installed else false }}"
+      rsyslog_installed: "{{ ('rsyslog.service' in ansible_facts.services) | default(false) }}"
+      rsyslog_active: "{{ (ansible_facts.services['rsyslog.service'].state == 'running') | default(false) }}"
+      rsyslog_enabled: "{{ (ansible_facts.services['rsyslog.service'].enabled == true) | default(false) }}"
 
-      auditd_installed: "{{ 'auditd.service' in ansible_facts.services }}"
-      auditd_active: "{{ ansible_facts.services['auditd.service'].state == 'running' if auditd_installed else false }}"
-      auditd_enabled: "{{ ansible_facts.services['auditd.service'].status == 'enabled' if auditd_installed else false }}"
+      auditd_installed: "{{ ('auditd.service' in ansible_facts.services) | default(false) }}"
+      auditd_active: "{{ (ansible_facts.services['auditd.service'].state == 'running') | default(false) }}"
+      auditd_enabled: "{{ (ansible_facts.services['auditd.service'].enabled == true) | default(false) }}"
 
   #################################################
-  # 2️⃣ Bash Logger Kontrol
+  # 2️⃣ Bash Logger Kontrolü
   #################################################
 
   - name: Check bash logger in /etc/profile
@@ -38,7 +38,7 @@
     ignore_errors: yes
 
   #################################################
-  # 3️⃣ Auditd Plugin Kontrol
+  # 3️⃣ Auditd Plugin Kontrolü
   #################################################
 
   - name: Check audit syslog plugin
@@ -47,7 +47,7 @@
     ignore_errors: yes
 
   #################################################
-  # 4️⃣ Bash Log Dosyası Kontrol
+  # 4️⃣ Bash Log Dosyası Kontrolü
   #################################################
 
   - name: Check /var/log/bash.log
@@ -56,7 +56,7 @@
     register: bashlog_stat
 
   #################################################
-  # 5️⃣ Rsyslog Kuralları Kontrol
+  # 5️⃣ Rsyslog Kuralları Kontrolü
   #################################################
 
   - name: Check local5.debug rule
@@ -75,7 +75,7 @@
     ignore_errors: yes
 
   #################################################
-  # 6️⃣ 50-default.conf Kontrol
+  # 6️⃣ 50-default.conf Kontrolü
   #################################################
 
   - name: Check 50-default.conf required rules
