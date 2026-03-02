@@ -80,12 +80,6 @@
         path: /var/log/bash.log
       register: bash_log_file
 
-    - name: Check bash log permissions
-      ansible.builtin.stat:
-        path: /var/log/bash.log
-      register: bash_log_perms
-      when: bash_log_file.stat.exists
-
     - name: Check rsyslog bash configuration
       ansible.builtin.lineinfile:
         path: /etc/rsyslog.d/bash.conf
@@ -119,6 +113,25 @@
       changed_when: false
       ignore_errors: yes
 
+    - name: Set package status facts
+      set_fact:
+        package_status: "{{ package_status | default({}) | combine({item.item: '✅ Kurulu' if not item.changed else '❌ Kurulu değil'}) }}"
+      loop: "{{ package_check.results }}"
+      when: package_check.results is defined
+
+    - name: Set service status facts
+      set_fact:
+        service_active: "{{ service_active | default({}) | combine({item.item: '✅ Evet' if item.status.ActiveState == 'active' else '❌ Hayır'}) }}"
+        service_enabled: "{{ service_enabled | default({}) | combine({item.item: '✅ Evet' if item.status.UnitFileState == 'enabled' else '❌ Hayır'}) }}"
+      loop: "{{ service_status.results }}"
+      when: service_status.results is defined
+
+    - name: Set default conf status facts
+      set_fact:
+        default_conf_status: "{{ default_conf_status | default({}) | combine({item.item | regex_replace('\\\\', ''): '✅ Var' if not item.changed else '❌ Yok'}) }}"
+      loop: "{{ default_conf_check.results }}"
+      when: default_conf_check.results is defined
+
     - name: Display comprehensive configuration report
       ansible.builtin.debug:
         msg: 
@@ -127,16 +140,16 @@
           - "══════════════════════════════════════════════════════════════════════"
           - ""
           - "📦 PAKET DURUMU:"
-          {% for pkg in package_check.results %}
-          - "  • {{ pkg.item }} : {{ '✅ Kurulu' if not pkg.changed else '❌ Kurulu değil' }}"
-          {% endfor %}
+          - "  • auditd : {{ package_status['auditd'] | default('❌ Bilinmiyor') }}"
+          - "  • rsyslog : {{ package_status['rsyslog'] | default('❌ Bilinmiyor') }}"
           - ""
           - "⚙️ SERVİS DURUMU:"
-          {% for svc in service_status.results %}
-          - "  • {{ svc.item }} :"
-          - "      - Aktif    : {{ '✅ Evet' if svc.status.ActiveState == 'active' else '❌ Hayır' }}"
-          - "      - Enabled  : {{ '✅ Evet' if svc.status.UnitFileState == 'enabled' else '❌ Hayır' }}"
-          {% endfor %}
+          - "  • rsyslog.service :"
+          - "      - Aktif    : {{ service_active['rsyslog.service'] | default('❌ Bilinmiyor') }}"
+          - "      - Enabled  : {{ service_enabled['rsyslog.service'] | default('❌ Bilinmiyor') }}"
+          - "  • auditd.service :"
+          - "      - Aktif    : {{ service_active['auditd.service'] | default('❌ Bilinmiyor') }}"
+          - "      - Enabled  : {{ service_enabled['auditd.service'] | default('❌ Bilinmiyor') }}"
           - ""
           - "🔧 AUDITD KONFIGÜRASYONU:"
           - "  • Syslog plugin : {{ '✅ Aktif' if not auditd_syslog_check.changed else '❌ Aktif değil' }}"
@@ -156,12 +169,12 @@
           - "  • Auditd log forwarding          : {{ '✅ Var' if not rsyslog_auditd_check.changed else '❌ Yok' }}"
           - ""
           - "📋 50-default.conf KONTROLÜ:"
-          {% for conf in default_conf_check.results %}
-          - "  • {{ conf.item | regex_replace('\\\\', '') }} : {{ '✅ Var' if not conf.changed else '❌ Yok' }}"
-          {% endfor %}
+          - "  • auth,authpriv.* /var/log/auth.log : {{ default_conf_status['auth,authpriv.* /var/log/auth.log'] | default('❌ Bilinmiyor') }}"
+          - "  • *.*;auth,authpriv.none -/var/log/syslog : {{ default_conf_status['*.*;auth,authpriv.none -/var/log/syslog'] | default('❌ Bilinmiyor') }}"
+          - "  • cron.* /var/log/cron.log : {{ default_conf_status['cron.* /var/log/cron.log'] | default('❌ Bilinmiyor') }}"
           - ""
           - "📝 BASH LOG ÖRNEKLERİ:"
-          {% if bash_log_entries.stdout != "No entries found" %}
+          {% if bash_log_entries.stdout is defined and bash_log_entries.stdout != "No entries found" %}
           {% for line in bash_log_entries.stdout_lines %}
           - "  {{ line }}"
           {% endfor %}
@@ -170,4 +183,3 @@
           {% endif %}
           - ""
           - "══════════════════════════════════════════════════════════════════════"
-      when: package_check.results is defined
