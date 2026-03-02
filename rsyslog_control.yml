@@ -132,6 +132,27 @@
       loop: "{{ default_conf_check.results }}"
       when: default_conf_check.results is defined
 
+    - name: Set bash log details fact
+      set_fact:
+        bash_log_details: >-
+          {% if bash_log_file.stat.exists %}
+          - "  • bash.log yetkileri : {{ bash_log_file.stat.mode }}"
+          - "  • bash.log sahibi    : {{ bash_log_file.stat.pw_name }}:{{ bash_log_file.stat.gr_name }}"
+          {% else %}
+          - ""
+          {% endif %}
+
+    - name: Set bash log entries fact
+      set_fact:
+        bash_log_entries_text: >-
+          {% if bash_log_entries.stdout is defined and bash_log_entries.stdout != "No entries found" %}
+          {% for line in bash_log_entries.stdout_lines %}
+          - "  {{ line }}"
+          {% endfor %}
+          {% else %}
+          - "  ⚠️ Henüz bash log kaydı bulunamadı. Yeni SSH oturumu açıp komut çalıştırın."
+          {% endif %}
+
     - name: Display comprehensive configuration report
       ansible.builtin.debug:
         msg: 
@@ -158,10 +179,7 @@
           - "  • /etc/profile     : {{ '✅ Var' if not profile_bash_check.changed else '❌ Yok' }}"
           - "  • /root/.bashrc    : {{ '✅ Var' if not bashrc_check.changed else '❌ Yok' }}"
           - "  • /var/log/bash.log : {{ '✅ Var' if bash_log_file.stat.exists else '❌ Yok' }}"
-          {% if bash_log_file.stat.exists %}
-          - "  • bash.log yetkileri : {{ bash_log_file.stat.mode }}"
-          - "  • bash.log sahibi    : {{ bash_log_file.stat.pw_name }}:{{ bash_log_file.stat.gr_name }}"
-          {% endif %}
+          - "{{ bash_log_details }}"
           - "  • bash.conf         : {{ '✅ Var' if not bash_conf_check.changed else '❌ Yok' }}"
           - ""
           - "📡 RSYSLOG KONFIGÜRASYONU:"
@@ -174,12 +192,6 @@
           - "  • cron.* /var/log/cron.log : {{ default_conf_status['cron.* /var/log/cron.log'] | default('❌ Bilinmiyor') }}"
           - ""
           - "📝 BASH LOG ÖRNEKLERİ:"
-          {% if bash_log_entries.stdout is defined and bash_log_entries.stdout != "No entries found" %}
-          {% for line in bash_log_entries.stdout_lines %}
-          - "  {{ line }}"
-          {% endfor %}
-          {% else %}
-          - "  ⚠️ Henüz bash log kaydı bulunamadı. Yeni SSH oturumu açıp komut çalıştırın."
-          {% endif %}
+          - "{{ bash_log_entries_text }}"
           - ""
           - "══════════════════════════════════════════════════════════════════════"
