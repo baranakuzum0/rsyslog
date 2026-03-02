@@ -10,90 +10,67 @@
     audit_plugin_paths:
       - /etc/audisp/plugins.d/syslog.conf
       - /etc/audit/plugins.d/syslog.conf
+    rsyslog_conf_file: /etc/rsyslog.conf
 
   tasks:
 
-  # ------------------------------------------------------
-  # Servislerin durumunu kontrol et (active & enabled)
-  # ------------------------------------------------------
-  - name: Check service active status
-    shell: systemctl is-active {{ item }}
-    register: service_active
-    ignore_errors: yes
-    loop:
-      - "{{ rsyslog_service }}"
-      - "{{ auditd_service }}"
-
-  - name: Check service enabled status
-    shell: systemctl is-enabled {{ item }}
-    register: service_enabled
-    ignore_errors: yes
-    loop:
-      - "{{ rsyslog_service }}"
-      - "{{ auditd_service }}"
+  # Servis durumu kontrolü
+  - name: Check rsyslog service status
+    service_facts:
 
   - name: Set service facts
     set_fact:
-      rsyslog_active: "{{ '✅' if service_active.results[0].stdout == 'active' else '❌' }}"
-      auditd_active: "{{ '✅' if service_active.results[1].stdout == 'active' else '❌' }}"
-      rsyslog_enabled: "{{ '✅' if service_enabled.results[0].stdout == 'enabled' else '❌' }}"
-      auditd_enabled: "{{ '✅' if service_enabled.results[1].stdout == 'enabled' else '❌' }}"
+      rsyslog_active: "{{ '✅' if ansible_facts.services[rsyslog_service].state == 'running' else '❌' }}"
+      rsyslog_enabled: "{{ '✅' if ansible_facts.services[rsyslog_service].enabled else '❌' }}"
+      auditd_active: "{{ '✅' if ansible_facts.services[auditd_service].state == 'running' else '❌' }}"
+      auditd_enabled: "{{ '✅' if ansible_facts.services[auditd_service].enabled else '❌' }}"
 
-  # ------------------------------------------------------
-  # Bash ve Auditd dosyalarını kontrol et
-  # ------------------------------------------------------
-  - name: Check /etc/profile exists
-    stat:
+  # Bash ve auditd dosyaları
+  - stat:
       path: /etc/profile
     register: profile_file
 
-  - name: Check /root/.bashrc exists
-    stat:
+  - stat:
       path: /root/.bashrc
     register: bashrc_file
 
-  - name: Find auditd plugin file
+  - name: Find auditd plugin path
     stat:
       path: "{{ item }}"
     loop: "{{ audit_plugin_paths }}"
     register: audit_plugin_stat
 
-  - name: Set auditd plugin path
+  - name: Set auditd plugin path if exists
     set_fact:
       auditd_plugin_path: "{{ item.stat.path }}"
     loop: "{{ audit_plugin_stat.results }}"
     when: item.stat.exists
 
-  - name: Check /var/log/bash.log
-    stat:
+  - stat:
       path: /var/log/bash.log
     register: bashlog_stat
 
-  - name: Check /etc/rsyslog.d/bash.conf
-    stat:
+  - stat:
       path: /etc/rsyslog.d/bash.conf
     register: local5_conf
 
-  - name: Check /etc/rsyslog.conf for audit imfile block
-    shell: grep -q '$ModLoad imfile' /etc/rsyslog.conf
+  # Rsyslog config check (blocking olmadan)
+  - name: Check rsyslog.conf imfile loaded
+    shell: grep -q '$ModLoad imfile' {{ rsyslog_conf_file }}
     register: audit_imfile_conf
     ignore_errors: yes
 
-  - name: Check remote forwarding (local5.*,local6.* @192.168.21.21)
-    shell: grep -q 'local5.*,local6.* *@192.168.21.21' /etc/rsyslog.conf
+  - name: Check rsyslog.conf remote forwarding
+    shell: grep -q 'local5.*,local6.* *@192.168.21.21' {{ rsyslog_conf_file }}
     register: remote_check
     ignore_errors: yes
 
-  - name: Check 50-default.conf exists
-    stat:
+  - stat:
       path: /etc/rsyslog.d/50-default.conf
     register: default_conf
 
-  # ------------------------------------------------------
-  # Compliance raporu oluştur
-  # ------------------------------------------------------
-  - name: Build compliance report
-    set_fact:
+  # Compliance raporu
+  - set_fact:
       compliance_errors: >-
         {{
           []
@@ -111,11 +88,7 @@
           + (["50-default.conf eksik"] if default_conf.stat.exists == false else [])
         }}
 
-  # ------------------------------------------------------
-  # Compliance raporunu göster
-  # ------------------------------------------------------
-  - name: Display Compliance Result
-    debug:
+  - debug:
       msg: |
         ======================================================
         RSYSLOG + AUDITD + BASH COMPLIANCE RAPORU
