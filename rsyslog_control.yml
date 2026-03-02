@@ -128,17 +128,18 @@
       check_mode: yes
       register: default_conf_check
       loop:
-        - { regex: 'auth,authpriv\.\*\s+/var/log/auth\.log', line: 'auth,authpriv.*                 /var/log/auth.log' }
-        - { regex: '\*\.\*;auth,authpriv\.none\s+-/var/log/syslog', line: '*.*;auth,authpriv.none          -/var/log/syslog' }
-        - { regex: 'cron\.\*\s+/var/log/cron\.log', line: 'cron.*                          /var/log/cron.log' }
+        - { regex: 'auth,authpriv\.\*\s+/var/log/auth\.log', line: 'auth,authpriv.*                 /var/log/auth.log', name: 'auth.log' }
+        - { regex: '\*\.\*;auth,authpriv\.none\s+-/var/log/syslog', line: '*.*;auth,authpriv.none          -/var/log/syslog', name: 'syslog' }
+        - { regex: 'cron\.\*\s+/var/log/cron\.log', line: 'cron.*                          /var/log/cron.log', name: 'cron.log' }
       ignore_errors: yes
 
     - name: Check for actual log entries in bash.log
       ansible.builtin.shell: |
         if [ -f /var/log/bash.log ] && [ "$(cat /var/log/bash.log | wc -l)" -gt 0 ]; then
-          tail -5 /var/log/bash.log
+          echo "✅ Log kayıtları var (son 3 satır):"
+          tail -3 /var/log/bash.log | sed 's/^/    /'
         else
-          echo "No entries found"
+          echo "❌ Henüz log kaydı yok"
         fi
       register: bash_log_entries
       changed_when: false
@@ -146,20 +147,20 @@
 
     - name: Set package status facts
       set_fact:
-        package_status: "{{ package_status | default({}) | combine({item.item: '✅ Kurulu' if not item.changed else '❌ Kurulu değil'}) }}"
+        package_status: "{{ package_status | default({}) | combine({item.item: '✅' if not item.changed else '❌'}) }}"
       loop: "{{ package_check.results }}"
       when: package_check.results is defined
 
     - name: Set service status facts
       set_fact:
-        service_active: "{{ service_active | default({}) | combine({item.item: '✅ Evet' if item.status.ActiveState == 'active' else '❌ Hayır'}) }}"
-        service_enabled: "{{ service_enabled | default({}) | combine({item.item: '✅ Evet' if item.status.UnitFileState == 'enabled' else '❌ Hayır'}) }}"
+        service_active: "{{ service_active | default({}) | combine({item.item: '✅' if item.status.ActiveState == 'active' else '❌'}) }}"
+        service_enabled: "{{ service_enabled | default({}) | combine({item.item: '✅' if item.status.UnitFileState == 'enabled' else '❌'}) }}"
       loop: "{{ service_status.results }}"
       when: service_status.results is defined
 
     - name: Set default conf status facts
       set_fact:
-        default_conf_status: "{{ default_conf_status | default({}) | combine({item.item.regex | regex_replace('\\\\', ''): '✅ Var' if not item.changed else '❌ Yok'}) }}"
+        default_conf_status: "{{ default_conf_status | default({}) | combine({item.item.name: '✅' if not item.changed else '❌'}) }}"
       loop: "{{ default_conf_check.results }}"
       when: default_conf_check.results is defined
 
@@ -167,54 +168,79 @@
       set_fact:
         auditd_plugin_status: >-
           {% if auditd_plugin_path is not defined %}
-          ❌ Dosya yok
+          ❌
           {% elif auditd_syslog_check is defined and not auditd_syslog_check.changed %}
-          ✅ Aktif
+          ✅
           {% else %}
-          ❌ Aktif değil
+          ❌
           {% endif %}
+        auditd_plugin_path_display: "{{ auditd_plugin_path | default('Bulunamadı') }}"
 
     - name: Display comprehensive configuration report
       ansible.builtin.debug:
         msg: 
-          - "══════════════════════════════════════════════════════════════════════"
-          - "RSYSLOG + AUDITD + BASH LOG KONFIGÜRASYON RAPORU"
-          - "══════════════════════════════════════════════════════════════════════"
+          - "╔══════════════════════════════════════════════════════════════════════╗"
+          - "║         RSYSLOG + AUDITD + BASH LOG KONFIGÜRASYON RAPORU            ║"
+          - "╚══════════════════════════════════════════════════════════════════════╝"
           - ""
-          - "📦 PAKET DURUMU:"
-          - "  • auditd : {{ package_status['auditd'] | default('❌ Bilinmiyor') }}"
-          - "  • rsyslog : {{ package_status['rsyslog'] | default('❌ Bilinmiyor') }}"
+          - "┌────────────────────────────────────────────────────────────────┐"
+          - "│ 📦 PAKETLER                                                     │"
+          - "├────────────────────────────────────────────────────────────────┤"
+          - "│   auditd  : [{{ package_status['auditd'] | default('❌') }}] {{ 'Kurulu' if package_status['auditd'] == '✅' else 'Kurulu Değil' }}"
+          - "│   rsyslog : [{{ package_status['rsyslog'] | default('❌') }}] {{ 'Kurulu' if package_status['rsyslog'] == '✅' else 'Kurulu Değil' }}"
+          - "└────────────────────────────────────────────────────────────────┘"
           - ""
-          - "⚙️ SERVİS DURUMU:"
-          - "  • rsyslog.service :"
-          - "      - Aktif    : {{ service_active['rsyslog.service'] | default('❌ Bilinmiyor') }}"
-          - "      - Enabled  : {{ service_enabled['rsyslog.service'] | default('❌ Bilinmiyor') }}"
-          - "  • auditd.service :"
-          - "      - Aktif    : {{ service_active['auditd.service'] | default('❌ Bilinmiyor') }}"
-          - "      - Enabled  : {{ service_enabled['auditd.service'] | default('❌ Bilinmiyor') }}"
+          - "┌────────────────────────────────────────────────────────────────┐"
+          - "│ ⚙️ SERVİSLER                                                    │"
+          - "├────────────────────────────────────────────────────────────────┤"
+          - "│   rsyslog.service :"
+          - "│     • Aktif   : [{{ service_active['rsyslog.service'] | default('❌') }}] {{ 'Çalışıyor' if service_active['rsyslog.service'] == '✅' else 'Çalışmıyor' }}"
+          - "│     • Enabled : [{{ service_enabled['rsyslog.service'] | default('❌') }}] {{ 'Aktif' if service_enabled['rsyslog.service'] == '✅' else 'Pasif' }}"
+          - "│"
+          - "│   auditd.service :"
+          - "│     • Aktif   : [{{ service_active['auditd.service'] | default('❌') }}] {{ 'Çalışıyor' if service_active['auditd.service'] == '✅' else 'Çalışmıyor' }}"
+          - "│     • Enabled : [{{ service_enabled['auditd.service'] | default('❌') }}] {{ 'Aktif' if service_enabled['auditd.service'] == '✅' else 'Pasif' }}"
+          - "└────────────────────────────────────────────────────────────────┘"
           - ""
-          - "🔧 AUDITD KONFIGÜRASYONU:"
-          - "  • Syslog plugin : {{ auditd_plugin_status }}"
-          {% if auditd_plugin_path is defined %}
-          - "    ({{ auditd_plugin_path }})"
-          {% endif %}
+          - "┌────────────────────────────────────────────────────────────────┐"
+          - "│ 🔧 AUDITD KONFIGÜRASYONU                                        │"
+          - "├────────────────────────────────────────────────────────────────┤"
+          - "│   Syslog plugin : [{{ auditd_plugin_status }}] {{ 'Aktif' if auditd_plugin_status == '✅' else 'Aktif Değil' }}"
+          - "│   Plugin yolu   : {{ auditd_plugin_path_display }}"
+          - "└────────────────────────────────────────────────────────────────┘"
           - ""
-          - "🐚 BASH LOG KONFIGÜRASYONU:"
-          - "  • /etc/profile     : {{ '✅ Var' if not profile_bash_check.changed else '❌ Yok' }}"
-          - "  • /root/.bashrc    : {{ '✅ Var' if not bashrc_check.changed else '❌ Yok' }}"
-          - "  • /var/log/bash.log : {{ '✅ Var' if bash_log_file.stat.exists else '❌ Yok' }}"
-          - "  • bash.conf         : {{ '✅ Var' if not bash_conf_check.changed else '❌ Yok' }}"
+          - "┌────────────────────────────────────────────────────────────────┐"
+          - "│ 🐚 BASH LOG KONFIGÜRASYONU                                      │"
+          - "├────────────────────────────────────────────────────────────────┤"
+          - "│   /etc/profile     : [{{ '✅' if not profile_bash_check.changed else '❌' }}] {{ 'Yapılandırılmış' if not profile_bash_check.changed else 'Yapılandırılmamış' }}"
+          - "│   /root/.bashrc    : [{{ '✅' if not bashrc_check.changed else '❌' }}] {{ 'Yapılandırılmış' if not bashrc_check.changed else 'Yapılandırılmamış' }}"
+          - "│   /var/log/bash.log: [{{ '✅' if bash_log_file.stat.exists else '❌' }}] {{ 'Mevcut' if bash_log_file.stat.exists else 'Mevcut Değil' }}"
+          - "│   bash.conf        : [{{ '✅' if not bash_conf_check.changed else '❌' }}] {{ 'Mevcut' if not bash_conf_check.changed else 'Mevcut Değil' }}"
+          - "└────────────────────────────────────────────────────────────────┘"
           - ""
-          - "📡 RSYSLOG KONFIGÜRASYONU:"
-          - "  • Remote forward (192.168.21.21) : {{ '✅ Var' if not rsyslog_remote_check.changed else '❌ Yok' }}"
-          - "  • Auditd log forwarding          : {{ '✅ Var' if not rsyslog_auditd_check.changed else '❌ Yok' }}"
+          - "┌────────────────────────────────────────────────────────────────┐"
+          - "│ 📡 RSYSLOG KONFIGÜRASYONU                                       │"
+          - "├────────────────────────────────────────────────────────────────┤"
+          - "│   Remote forward (192.168.21.21) : [{{ '✅' if not rsyslog_remote_check.changed else '❌' }}] {{ 'Yapılandırılmış' if not rsyslog_remote_check.changed else 'Yapılandırılmamış' }}"
+          - "│   Auditd log forwarding          : [{{ '✅' if not rsyslog_auditd_check.changed else '❌' }}] {{ 'Yapılandırılmış' if not rsyslog_auditd_check.changed else 'Yapılandırılmamış' }}"
+          - "└────────────────────────────────────────────────────────────────┘"
           - ""
-          - "📋 50-default.conf KONTROLÜ:"
-          - "  • auth,authpriv.* /var/log/auth.log : {{ default_conf_status['auth,authpriv.* /var/log/auth.log'] | default('❌ Bilinmiyor') }}"
-          - "  • *.*;auth,authpriv.none -/var/log/syslog : {{ default_conf_status['*.*;auth,authpriv.none -/var/log/syslog'] | default('❌ Bilinmiyor') }}"
-          - "  • cron.* /var/log/cron.log : {{ default_conf_status['cron.* /var/log/cron.log'] | default('❌ Bilinmiyor') }}"
+          - "┌────────────────────────────────────────────────────────────────┐"
+          - "│ 📋 50-default.conf KONTROLÜ                                     │"
+          - "├────────────────────────────────────────────────────────────────┤"
+          - "│   auth.log  : [{{ default_conf_status['auth.log'] | default('❌') }}] {{ 'Yapılandırılmış' if default_conf_status['auth.log'] == '✅' else 'Yapılandırılmamış' }}"
+          - "│   syslog    : [{{ default_conf_status['syslog'] | default('❌') }}] {{ 'Yapılandırılmış' if default_conf_status['syslog'] == '✅' else 'Yapılandırılmamış' }}"
+          - "│   cron.log  : [{{ default_conf_status['cron.log'] | default('❌') }}] {{ 'Yapılandırılmış' if default_conf_status['cron.log'] == '✅' else 'Yapılandırılmamış' }}"
+          - "└────────────────────────────────────────────────────────────────┘"
           - ""
-          - "📝 BASH LOG ÖRNEKLERİ:"
-          - "  {{ bash_log_entries.stdout | default('⚠️ Log okunamadı') }}"
+          - "┌────────────────────────────────────────────────────────────────┐"
+          - "│ 📝 BASH LOG KAYITLARI                                           │"
+          - "├────────────────────────────────────────────────────────────────┤"
+          {% for line in bash_log_entries.stdout_lines %}
+          - "│   {{ line }}"
+          {% endfor %}
+          - "└────────────────────────────────────────────────────────────────┘"
           - ""
-          - "══════════════════════════════════════════════════════════════════════"
+          - "╔══════════════════════════════════════════════════════════════════════╗"
+          - "║                      ✓ = Tamam  ✗ = Eksik/Hatalı                    ║"
+          - "╚══════════════════════════════════════════════════════════════════════╝"
