@@ -1,65 +1,98 @@
 ---
-- name: RSYSLOG + AUDITD + BASH COMPLIANCE (Fast & Safe)
+- name: RSYSLOG + AUDITD + BASH COMPLIANCE CHECK
   hosts: all
   become: yes
   gather_facts: yes
 
+  vars:
+    rsyslog_service: rsyslog.service
+    auditd_service: auditd.service
+    audit_plugin_paths:
+      - /etc/audisp/plugins.d/syslog.conf
+      - /etc/audit/plugins.d/syslog.conf
+
   tasks:
 
-  - name: Gather service facts
+  - name: Check if rsyslog service exists
     service_facts:
 
-  - name: Set service status facts
+  - name: Check auditd service exists
+    service_facts:
+
+  - name: Set service and package facts
     set_fact:
-      rsyslog_installed: "{{ 'rsyslog.service' in ansible_facts.services }}"
-      rsyslog_active: "{{ ansible_facts.services['rsyslog.service'].state == 'running' if rsyslog_installed else false }}"
-      rsyslog_enabled: "{{ ansible_facts.services['rsyslog.service'].enabled if rsyslog_installed else false }}"
+      rsyslog_installed: "{{ rsyslog_service in ansible_facts.services }}"
+      rsyslog_active: "{{ ansible_facts.services[rsyslog_service].state == 'running' if rsyslog_installed else false }}"
+      rsyslog_enabled: "{{ ansible_facts.services[rsyslog_service].enabled if rsyslog_installed else false }}"
 
-      auditd_installed: "{{ 'auditd.service' in ansible_facts.services }}"
-      auditd_active: "{{ ansible_facts.services['auditd.service'].state == 'running' if auditd_installed else false }}"
-      auditd_enabled: "{{ ansible_facts.services['auditd.service'].enabled if auditd_installed else false }}"
+      auditd_installed: "{{ auditd_service in ansible_facts.services }}"
+      auditd_active: "{{ ansible_facts.services[auditd_service].state == 'running' if auditd_installed else false }}"
+      auditd_enabled: "{{ ansible_facts.services[auditd_service].enabled if auditd_installed else false }}"
 
-  - name: Check bash logger in /etc/profile
+  - name: Check /etc/profile exists
     stat:
       path: /etc/profile
     register: profile_file
 
-  - name: Check bash logger in /root/.bashrc
+  - name: Check /root/.bashrc exists
     stat:
       path: /root/.bashrc
     register: bashrc_file
 
-  - name: Check audit syslog plugin
+  - name: Find auditd plugin file
     stat:
-      path: /etc/audit/plugins.d/syslog.conf
-    register: audit_plugin_file
+      path: "{{ item }}"
+    loop: "{{ audit_plugin_paths }}"
+    register: audit_plugin_stat
+
+  - name: Set auditd plugin path
+    set_fact:
+      auditd_plugin_path: "{{ item.stat.path }}"
+    loop: "{{ audit_plugin_stat.results }}"
+    when: item.stat.exists
+
+  - name: Check auditd plugin active
+    lineinfile:
+      path: "{{ auditd_plugin_path }}"
+      regexp: '^active\s*=\s*yes'
+      line: 'active = yes'
+      state: present
+    check_mode: yes
+    register: auditd_syslog_check
+    when: auditd_plugin_path is defined
+    ignore_errors: yes
 
   - name: Check /var/log/bash.log
     stat:
       path: /var/log/bash.log
     register: bashlog_stat
 
-  - name: Check local5.debug rule exists
+  - name: Check /etc/rsyslog.d/bash.conf
     stat:
       path: /etc/rsyslog.d/bash.conf
     register: local5_conf
 
-  - name: Check audit imfile rule exists
+  - name: Check /etc/rsyslog.conf for audit imfile block
     stat:
       path: /etc/rsyslog.conf
     register: audit_imfile_conf
 
-  - name: Check remote forwarding exists
-    shell: grep -q "@192.168.21.21" /etc/rsyslog.conf
+  - name: Check /etc/rsyslog.conf for remote forward
+    stat:
+      path: /etc/rsyslog.conf
+    register: rsyslog_conf_file
+
+  - name: Check remote forwarding (local5.*,local6.* @192.168.21.21)
+    shell: grep -q 'local5.*,local6.* *@192.168.21.21' /etc/rsyslog.conf
     register: remote_check
     ignore_errors: yes
 
-  - name: Check 50-default.conf rules
+  - name: Check 50-default.conf exists
     stat:
       path: /etc/rsyslog.d/50-default.conf
     register: default_conf
 
-  - name: Build compliance error list
+  - name: Build compliance report
     set_fact:
       compliance_errors: >-
         {{
@@ -67,21 +100,16 @@
           + (["rsyslog servisi kurulu değil"] if not rsyslog_installed else [])
           + (["rsyslog servisi aktif değil"] if not rsyslog_active else [])
           + (["rsyslog servisi enabled değil"] if not rsyslog_enabled else [])
-
           + (["auditd servisi kurulu değil"] if not auditd_installed else [])
           + (["auditd servisi aktif değil"] if not auditd_active else [])
           + (["auditd servisi enabled değil"] if not auditd_enabled else [])
-
           + (["/etc/profile bash logger eksik"] if profile_file.stat.exists == false else [])
           + (["/root/.bashrc bash logger eksik"] if bashrc_file.stat.exists == false else [])
-
-          + (["auditd syslog plugin yok"] if audit_plugin_file.stat.exists == false else [])
+          + (["auditd syslog plugin yok"] if auditd_plugin_path is not defined else [])
           + (["/var/log/bash.log dosyası yok"] if bashlog_stat.stat.exists == false else [])
-
-          + (["local5.debug rsyslog rule eksik"] if local5_conf.stat.exists == false else [])
-          + (["audit imfile rule eksik"] if audit_imfile_conf.stat.exists == false else [])
+          + (["/etc/rsyslog.d/bash.conf eksik"] if local5_conf.stat.exists == false else [])
+          + (["/etc/rsyslog.conf audit imfile yok"] if audit_imfile_conf.stat.exists == false else [])
           + (["rsyslog remote forwarding eksik"] if remote_check.rc != 0 else [])
-
           + (["50-default.conf eksik"] if default_conf.stat.exists == false else [])
         }}
 
@@ -89,11 +117,11 @@
     debug:
       msg: |
         ======================================================
-        RSYSLOG + AUDITD + BASH DOC COMPLIANCE RAPORU
+        RSYSLOG + AUDITD + BASH COMPLIANCE RAPORU
         ======================================================
 
         {% if compliance_errors | length == 0 %}
-        🎉 Tüm doküman maddeleri eksiksiz uygulanmış.
+        🎉 Tüm maddeler eksiksiz uygulanmış.
         {% else %}
         ❌ Eksik / Hatalı Konfigürasyonlar:
 
