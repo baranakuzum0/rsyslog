@@ -1,5 +1,5 @@
 ---
-- name: RSYSLOG + Audit + Bash Log Kontrol Playbook
+- name: RSYSLOG + Audit + Bash Log Kontrol
   hosts: all
   become: yes
 
@@ -8,20 +8,20 @@
 
   tasks:
 
-    - name: Auditd kurulu mu kontrol et
-      shell: dpkg -l | grep -w auditd
+    - name: Auditd paketi kurulu mu
+      command: dpkg -l auditd
       register: auditd_pkg
       failed_when: false
       changed_when: false
 
-    - name: Auditd servisi aktif mi
-      shell: systemctl is-active auditd
+    - name: Auditd servis durumu
+      command: systemctl is-active auditd
       register: auditd_service
       failed_when: false
       changed_when: false
 
-    - name: Rsyslog servisi aktif mi
-      shell: systemctl is-active rsyslog
+    - name: Rsyslog servis durumu
+      command: systemctl is-active rsyslog
       register: rsyslog_service
       failed_when: false
       changed_when: false
@@ -31,51 +31,45 @@
         path: /var/log/bash.log
       register: bash_log_file
 
-    - name: Bash rsyslog config var mı
-      shell: grep -E "^local5.debug" /etc/rsyslog.d/bash.conf
+    - name: Bash rsyslog config kontrol
+      command: grep '^local5.debug' /etc/rsyslog.d/bash.conf
       register: bash_rsyslog
       failed_when: false
       changed_when: false
 
-    - name: QRadar forwarding var mı
-      shell: grep "@@{{ qradar_ip }}" /etc/rsyslog.conf
+    - name: QRadar forwarding kontrol
+      command: grep '@@{{ qradar_ip }}' /etc/rsyslog.conf
       register: qradar_forward
       failed_when: false
       changed_when: false
 
-    - name: Audit log rsyslog imfile config var mı
-      shell: grep "InputFileName /var/log/audit/audit.log" /etc/rsyslog.conf
+    - name: Audit imfile config kontrol
+      command: grep 'InputFileName /var/log/audit/audit.log' /etc/rsyslog.conf
       register: audit_imfile
       failed_when: false
       changed_when: false
 
-    - name: Bash logging profile kontrol
-      shell: grep "history_to_syslog" /etc/profile
+    - name: Bash profile logging kontrol
+      command: grep 'history_to_syslog' /etc/profile
       register: bash_profile
       failed_when: false
       changed_when: false
 
-    - name: Bash logging root bashrc kontrol
-      shell: grep "history_to_syslog" /root/.bashrc
+    - name: Root bashrc logging kontrol
+      command: grep 'history_to_syslog' /root/.bashrc
       register: bash_bashrc
       failed_when: false
       changed_when: false
 
     - name: Sonuçları göster
       debug:
-        msg: |
-          AUDITD PAKET: {{ 'VAR' if auditd_pkg.rc == 0 else 'YOK' }}
-          AUDITD SERVICE: {{ auditd_service.stdout }}
-          RSYSLOG SERVICE: {{ rsyslog_service.stdout }}
-
-          BASH LOG DOSYASI: {{ 'VAR' if bash_log_file.stat.exists else 'YOK' }}
-
-          BASH RSYSLOG CONFIG: {{ 'VAR' if bash_rsyslog.rc == 0 else 'YOK' }}
-
-          QRADAR FORWARD: {{ 'VAR' if qradar_forward.rc == 0 else 'YOK' }}
-
-          AUDIT IMFILE CONFIG: {{ 'VAR' if audit_imfile.rc == 0 else 'YOK' }}
-
-          BASH PROFILE LOGGING: {{ 'VAR' if bash_profile.rc == 0 else 'YOK' }}
-
-          ROOT BASHRC LOGGING: {{ 'VAR' if bash_bashrc.rc == 0 else 'YOK' }}
+        msg:
+          - "AUDITD PAKET: {{ 'VAR' if auditd_pkg.rc == 0 else 'YOK' }}"
+          - "AUDITD SERVICE: {{ auditd_service.stdout | default('unknown') }}"
+          - "RSYSLOG SERVICE: {{ rsyslog_service.stdout | default('unknown') }}"
+          - "BASH LOG DOSYASI: {{ 'VAR' if bash_log_file.stat.exists else 'YOK' }}"
+          - "BASH RSYSLOG CONFIG: {{ 'VAR' if bash_rsyslog.rc == 0 else 'YOK' }}"
+          - "QRADAR FORWARD: {{ 'VAR' if qradar_forward.rc == 0 else 'YOK' }}"
+          - "AUDIT IMFILE CONFIG: {{ 'VAR' if audit_imfile.rc == 0 else 'YOK' }}"
+          - "BASH PROFILE LOGGING: {{ 'VAR' if bash_profile.rc == 0 else 'YOK' }}"
+          - "ROOT BASHRC LOGGING: {{ 'VAR' if bash_bashrc.rc == 0 else 'YOK' }}"
