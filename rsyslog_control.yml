@@ -37,7 +37,7 @@
 
     # 5. Bash rsyslog config
     - name: Bash rsyslog config var mı
-      command: grep -Fx "local5.debug           /var/log/bash.log" /etc/rsyslog.d/bash.conf
+      command: grep -F "local5.debug           /var/log/bash.log" /etc/rsyslog.d/bash.conf
       register: bash_rsyslog
       failed_when: false
       changed_when: false
