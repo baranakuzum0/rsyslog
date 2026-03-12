@@ -1,5 +1,5 @@
 ---
-- name: RSYSLOG + Audit + Bash Log Kontrol (Ubuntu/Debian)
+- name: RSYSLOG + Audit + Bash Log Kontrol (Ubuntu/Debian) - Human Readable Output
   hosts: all
   become: yes
 
@@ -8,86 +8,86 @@
 
   tasks:
 
-    # 1. Auditd paketi kurulu mu
+    # 1. Auditd paketi
     - name: Auditd paketi kurulu mu
       command: dpkg -s auditd
       register: auditd_pkg
       failed_when: false
       changed_when: false
 
-    # 2. Auditd servisi aktif mi
+    # 2. Auditd servisi
     - name: Auditd servis aktif mi
       command: systemctl is-active auditd
       register: auditd_service
       failed_when: false
       changed_when: false
 
-    # 3. Rsyslog servis aktif mi
+    # 3. Rsyslog servisi
     - name: Rsyslog servis aktif mi
       command: systemctl is-active rsyslog
       register: rsyslog_service
       failed_when: false
       changed_when: false
 
-    # 4. Bash log dosyası var mı
+    # 4. Bash log dosyası
     - name: Bash log dosyası var mı
       stat:
         path: /var/log/bash.log
       register: bash_log_file
 
-    # 5. Bash rsyslog config var mı
+    # 5. Bash rsyslog config
     - name: Bash rsyslog config var mı
       command: grep local5.debug /etc/rsyslog.d/bash.conf
       register: bash_rsyslog
       failed_when: false
       changed_when: false
 
-    # 6. QRadar forwarding var mı
+    # 6. QRadar forwarding
     - name: QRadar forwarding var mı
-      command: grep -R "@@{{ qradar_ip }}" /etc/rsyslog*
+      command: grep -R "@{{ qradar_ip }}" /etc/rsyslog*
       register: qradar_forward
       failed_when: false
       changed_when: false
 
-    # 7. Audit imfile config var mı
+    # 7. Audit imfile config
     - name: Audit imfile config var mı
       command: grep -R "/var/log/audit/audit.log" /etc/rsyslog*
       register: audit_imfile
       failed_when: false
       changed_when: false
 
-    # 8. /etc/profile içinde history_to_syslog var mı
+    # 8. /etc/profile logging
     - name: Profile logging var mı
       command: grep history_to_syslog /etc/profile
       register: profile_log
       failed_when: false
       changed_when: false
 
-    # 9. /root/.bashrc içinde history_to_syslog var mı
+    # 9. /root/.bashrc logging
     - name: Root bashrc logging var mı
       command: grep history_to_syslog /root/.bashrc
       register: bashrc_log
       failed_when: false
       changed_when: false
 
-    # 10. Audit syslog plugin aktif mi
+    # 10. Audit syslog plugin
     - name: Audit syslog plugin aktif mi
       command: grep '^active = yes' /etc/audit/plugins.d/syslog.conf
       register: audit_plugin
       failed_when: false
       changed_when: false
 
-    # 11. Sonuçları AKTIF/PASIF olarak göster
-    - name: Kontrol Sonuçları
+    # 11. Human readable sonuç
+    - name: Kontrol Sonuçları (Human Readable)
       debug:
         msg:
-          - "AUDITD PAKET: {{ 'AKTIF' if auditd_pkg.rc == 0 else 'PASIF' }}"
-          - "AUDITD SERVICE: {{ 'AKTIF' if auditd_service.stdout == 'active' else 'PASIF' }}"
-          - "RSYSLOG SERVICE: {{ 'AKTIF' if rsyslog_service.stdout == 'active' else 'PASIF' }}"
-          - "BASH LOG DOSYASI: {{ 'AKTIF' if bash_log_file.stat.exists else 'PASIF' }}"
-          - "BASH RSYSLOG CONFIG: {{ 'AKTIF' if bash_rsyslog.rc == 0 else 'PASIF' }}"
-          - "QRADAR FORWARD: {{ 'AKTIF' if qradar_forward.rc == 0 else 'PASIF' }}"
-          - "AUDIT IMFILE CONFIG: {{ 'AKTIF' if audit_imfile.rc == 0 else 'PASIF' }}"
-          - "PROFILE LOGGING: {{ 'AKTIF' if profile_log.rc == 0 else 'PASIF' }}"
-          - "ROOT BASHRC LOGGING: {{ 'AKTIF' if bashrc_log.rc == 0 else 'PASIF' }}"
-          - "AUDIT SYSLOG PLUGIN: {{ 'AKTIF' if audit_plugin.rc == 0 else 'PASIF' }}"
+          - "AUDITD PAKET: {{ 'AKTIF ✅ Paket kurulu' if auditd_pkg.rc == 0 else 'PASIF ❌ Paket kurulu değil' }}"
+          - "AUDITD SERVICE: {{ 'AKTIF ✅ Servis çalışıyor' if auditd_service.stdout == 'active' else 'PASIF ❌ Servis kapalı' }}"
+          - "RSYSLOG SERVICE: {{ 'AKTIF ✅ Servis çalışıyor' if rsyslog_service.stdout == 'active' else 'PASIF ❌ Servis kapalı' }}"
+          - "BASH LOG DOSYASI: {{ 'AKTIF ✅ /var/log/bash.log var' if bash_log_file.stat.exists else 'PASIF ❌ /var/log/bash.log yok' }}"
+          - "BASH RSYSLOG CONFIG: {{ 'AKTIF ✅ /etc/rsyslog.d/bash.conf içinde local5.debug var' if bash_rsyslog.rc == 0 else 'PASIF ❌ /etc/rsyslog.d/bash.conf içinde local5.debug yok' }}"
+          - "QRADAR FORWARD: {{ 'AKTIF ✅ Loglar uzak sunucuya gidiyor' if qradar_forward.rc == 0 else 'PASIF ❌ @@{{ qradar_ip }} bulunamadı, loglar gitmiyor' }}"
+          - "AUDIT IMFILE CONFIG: {{ 'AKTIF ✅ /var/log/audit/audit.log için imfile var' if audit_imfile.rc == 0 else 'PASIF ❌ /var/log/audit/audit.log için imfile ayarı yok' }}"
+          - "PROFILE LOGGING: {{ 'AKTIF ✅ /etc/profile içinde history_to_syslog var' if profile_log.rc == 0 else 'PASIF ❌ /etc/profile içinde history_to_syslog yok' }}"
+          - "ROOT BASHRC LOGGING: {{ 'AKTIF ✅ /root/.bashrc içinde history_to_syslog var' if bashrc_log.rc == 0 else 'PASIF ❌ /root/.bashrc içinde history_to_syslog yok' }}"
+          - "AUDIT SYSLOG PLUGIN: {{ 'AKTIF ✅ /etc/audit/plugins.d/syslog.conf içinde active = yes var' if audit_plugin.rc == 0 else 'PASIF ❌ /etc/audit/plugins.d/syslog.conf içinde active = yes yok' }}"
