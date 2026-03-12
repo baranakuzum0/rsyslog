@@ -9,18 +9,18 @@
   tasks:
 
     - name: Auditd paketi kurulu mu
-      command: dpkg -l auditd
+      command: dpkg -s auditd
       register: auditd_pkg
       failed_when: false
       changed_when: false
 
-    - name: Auditd servis durumu
+    - name: Auditd servis aktif mi
       command: systemctl is-active auditd
       register: auditd_service
       failed_when: false
       changed_when: false
 
-    - name: Rsyslog servis durumu
+    - name: Rsyslog servis aktif mi
       command: systemctl is-active rsyslog
       register: rsyslog_service
       failed_when: false
@@ -31,37 +31,43 @@
         path: /var/log/bash.log
       register: bash_log_file
 
-    - name: Bash rsyslog config kontrol
+    - name: Bash rsyslog config var mı
       command: grep '^local5.debug' /etc/rsyslog.d/bash.conf
       register: bash_rsyslog
       failed_when: false
       changed_when: false
 
-    - name: QRadar forwarding kontrol
+    - name: QRadar forwarding var mı
       command: grep '@@{{ qradar_ip }}' /etc/rsyslog.conf
       register: qradar_forward
       failed_when: false
       changed_when: false
 
-    - name: Audit imfile config kontrol
+    - name: Audit imfile config var mı
       command: grep 'InputFileName /var/log/audit/audit.log' /etc/rsyslog.conf
       register: audit_imfile
       failed_when: false
       changed_when: false
 
-    - name: Bash profile logging kontrol
+    - name: Bash profile logging var mı
       command: grep 'history_to_syslog' /etc/profile
       register: bash_profile
       failed_when: false
       changed_when: false
 
-    - name: Root bashrc logging kontrol
+    - name: Root bashrc logging var mı
       command: grep 'history_to_syslog' /root/.bashrc
       register: bash_bashrc
       failed_when: false
       changed_when: false
 
-    - name: Sonuçları göster
+    - name: Audit syslog plugin aktif mi
+      command: grep '^active = yes' /etc/audit/plugins.d/syslog.conf
+      register: audit_plugin
+      failed_when: false
+      changed_when: false
+
+    - name: Kontrol sonuçları
       debug:
         msg:
           - "AUDITD PAKET: {{ 'VAR' if auditd_pkg.rc == 0 else 'YOK' }}"
@@ -71,5 +77,6 @@
           - "BASH RSYSLOG CONFIG: {{ 'VAR' if bash_rsyslog.rc == 0 else 'YOK' }}"
           - "QRADAR FORWARD: {{ 'VAR' if qradar_forward.rc == 0 else 'YOK' }}"
           - "AUDIT IMFILE CONFIG: {{ 'VAR' if audit_imfile.rc == 0 else 'YOK' }}"
+          - "AUDIT SYSLOG PLUGIN: {{ 'VAR' if audit_plugin.rc == 0 else 'YOK' }}"
           - "BASH PROFILE LOGGING: {{ 'VAR' if bash_profile.rc == 0 else 'YOK' }}"
           - "ROOT BASHRC LOGGING: {{ 'VAR' if bash_bashrc.rc == 0 else 'YOK' }}"
