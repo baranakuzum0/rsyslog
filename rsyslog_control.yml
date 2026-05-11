@@ -1,126 +1,91 @@
-- name: Full Security & Logging Compliance Audit
+---
+- name: Bash + Audit + Rsyslog Existence Check
   hosts: all
   become: yes
 
   tasks:
 
-  # ==================================================
-  # 1. SERVİS DURUM KONTROLÜ
-  # ==================================================
-  - name: Check rsyslog service
-    command: systemctl is-active rsyslog
-    register: rsyslog_service
-    failed_when: false
+  # -------------------------
+  # /etc/profile kontrol
+  # -------------------------
+  - name: Check /etc/profile bash logging exists
+    shell: grep -q "logger" /etc/profile && echo "EXISTS" || echo "MISSING"
+    register: profile_result
     changed_when: false
 
-  - name: Check auditd service
-    command: systemctl is-active auditd
-    register: auditd_service
-    failed_when: false
+  - debug:
+      msg: "/etc/profile => {{ profile_result.stdout }}"
+
+  # -------------------------
+  # /root/.bashrc kontrol
+  # -------------------------
+  - name: Check /root/.bashrc logging exists
+    shell: grep -q "history_to_syslog\|logger\|trap" /root/.bashrc && echo "EXISTS" || echo "MISSING"
+    register: bashrc_result
     changed_when: false
 
-  # ==================================================
-  # 2. BASH LOGGING ( /etc/profile + /root/.bashrc )
-  # ==================================================
-  - name: Check bash logging block in /etc/profile
-    shell: |
-      grep -q "history_to_syslog" /etc/profile &&
-      grep -q "logger -p local5.debug" /etc/profile &&
-      grep -q "trap history_to_syslog" /etc/profile
-    register: profile_bash
-    failed_when: false
+  - debug:
+      msg: "/root/.bashrc => {{ bashrc_result.stdout }}"
+
+  # -------------------------
+  # audit plugin kontrol
+  # -------------------------
+  - name: Check audit syslog plugin (new path)
+    stat:
+      path: /etc/audit/plugins.d/syslog.conf
+    register: audit_new
+
+  - debug:
+      msg: "/etc/audit/plugins.d/syslog.conf => {{ audit_new.stat.exists }}"
+
+  - name: Check audit syslog plugin (old path)
+    stat:
+      path: /etc/audisp/plugins.d/syslog.conf
+    register: audit_old
+
+  - debug:
+      msg: "/etc/audisp/plugins.d/syslog.conf => {{ audit_old.stat.exists }}"
+
+  # -------------------------
+  # audit active kontrol
+  # -------------------------
+  - name: Check audit plugin active=yes
+    shell: grep -R "active *= *yes" /etc/audit /etc/audisp 2>/dev/null || echo "NOT FOUND"
+    register: audit_active
     changed_when: false
 
-  - name: Check bash logging block in /root/.bashrc
-    shell: |
-      grep -q "history_to_syslog" /root/.bashrc &&
-      grep -q "logger -p local5.debug" /root/.bashrc &&
-      grep -q "trap history_to_syslog" /root/.bashrc
-    register: bashrc_bash
-    failed_when: false
+  - debug:
+      msg: "audit active => {{ audit_active.stdout }}"
+
+  # -------------------------
+  # rsyslog audit log kontrol
+  # -------------------------
+  - name: Check rsyslog audit forwarding
+    shell: grep -R "/var/log/audit/audit.log" /etc/rsyslog* 2>/dev/null || echo "NOT FOUND"
+    register: rsyslog_audit
     changed_when: false
 
-  # ==================================================
-  # 3. AUDIT PLUGIN KONTROLÜ
-  # ==================================================
-  - name: Check audit plugin (audisp)
-    shell: grep -F "active = yes" /etc/audisp/plugins.d/syslog.conf
-    register: audisp_plugin
-    failed_when: false
-    changed_when: false
+  - debug:
+      msg: "rsyslog audit => {{ rsyslog_audit.stdout }}"
 
-  - name: Check audit plugin (audit)
-    shell: grep -F "active = yes" /etc/audit/plugins.d/syslog.conf
-    register: audit_plugin
-    failed_when: false
-    changed_when: false
-
-  # ==================================================
-  # 4. QRADAR + RSYSLOG CONFIG
-  # ==================================================
-  - name: Check QRadar forwarding
-    shell: grep -F "192.168.121.21" /etc/rsyslog.conf
-    register: qradar_forward
-    failed_when: false
-    changed_when: false
-
-  - name: Check audit imfile config
-    shell: grep -F "/var/log/audit/audit.log" /etc/rsyslog.conf
-    register: audit_imfile
-    failed_when: false
-    changed_when: false
-
-  # ==================================================
-  # 5. BASH LOG DOSYASI + CONF
-  # ==================================================
+  # -------------------------
+  # bash.log kontrol
+  # -------------------------
   - name: Check /var/log/bash.log exists
     stat:
       path: /var/log/bash.log
-    register: bash_log
+    register: bashlog
 
-  - name: Check bash rsyslog config
-    stat:
-      path: /etc/rsyslog.d/bash.conf
-    register: bash_conf
+  - debug:
+      msg: "/var/log/bash.log => {{ bashlog.stat.exists }}"
 
-  # ==================================================
-  # 6. 50-DEFAULT.CONF KONTROLÜ
-  # ==================================================
-  - name: Check rsyslog default rules
-    shell: |
-      grep -q "auth,authpriv" /etc/rsyslog.d/50-default.conf &&
-      grep -q "cron" /etc/rsyslog.d/50-default.conf &&
-      grep -q "mail.err" /etc/rsyslog.d/50-default.conf &&
-      grep -q "emerg" /etc/rsyslog.d/50-default.conf
-    register: default_conf
-    failed_when: false
+  # -------------------------
+  # rsyslog rules kontrol
+  # -------------------------
+  - name: Check rsyslog rules existence
+    shell: grep -E "auth,authpriv|cron|local1|mail|syslog" /etc/rsyslog* 2>/dev/null || echo "NOT FOUND"
+    register: rsyslog_rules
     changed_when: false
 
-  # ==================================================
-  # 7. RAPOR
-  # ==================================================
-  - name: Compliance Report
-    debug:
-      msg:
-        - "================ SYSTEM SERVICES ================"
-        - "RSYSLOG: {{ 'ACTIVE' if rsyslog_service.stdout == 'active' else 'INACTIVE' }}"
-        - "AUDITD: {{ 'ACTIVE' if auditd_service.stdout == 'active' else 'INACTIVE' }}"
-
-        - "================ BASH LOGGING ================"
-        - "/etc/profile: {{ 'COMPLIANT' if profile_bash.rc == 0 else 'NON-COMPLIANT' }}"
-        - "/root/.bashrc: {{ 'COMPLIANT' if bashrc_bash.rc == 0 else 'NON-COMPLIANT' }}"
-
-        - "================ AUDIT PLUGINS ================"
-        - "AUDISP SYSLOG: {{ 'ACTIVE' if audisp_plugin.rc == 0 else 'MISSING' }}"
-        - "AUDIT SYSLOG: {{ 'ACTIVE' if audit_plugin.rc == 0 else 'MISSING' }}"
-
-        - "================ QRADAR / RSYSLOG ================"
-        - "QRADAR FORWARD: {{ 'CONFIGURED' if qradar_forward.rc == 0 else 'MISSING' }}"
-        - "AUDIT IMFILE: {{ 'CONFIGURED' if audit_imfile.rc == 0 else 'MISSING' }}"
-
-        - "================ FILE CHECKS ================"
-        - "bash.log: {{ 'EXISTS' if bash_log.stat.exists else 'MISSING' }}"
-        - "bash.conf: {{ 'EXISTS' if bash_conf.stat.exists else 'MISSING' }}"
-
-        - "================ DEFAULT RULES ================"
-        - "50-default.conf: {{ 'COMPLIANT' if default_conf.rc == 0 else 'MISSING RULES' }}"
+  - debug:
+      msg: "rsyslog rules => {{ rsyslog_rules.stdout }}"
