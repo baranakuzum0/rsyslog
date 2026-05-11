@@ -1,111 +1,174 @@
 ---
-- name: Bash + Audit + Rsyslog Compliance Check (STRICT)
+- name: STRICT Linux Compliance (BYTE-LEVEL EXACT MATCH)
   hosts: all
   become: yes
   gather_facts: no
 
+  vars:
+    tmp_dir: /tmp/compliance_baseline
+
   tasks:
 
   # =====================================================
-  # 1. BASH LOGGING (/etc/profile + /root/.bashrc)
+  # BASELINE FILES (EXPECTED STATE)
   # =====================================================
-  - name: Check bash logging in /etc/profile
-    shell: grep -q "history_to_syslog" /etc/profile && echo "PASS" || echo "FAIL"
-    register: profile
+  - name: Create baseline directory
+    file:
+      path: "{{ tmp_dir }}"
+      state: directory
+
+  # =====================================================
+  # 1. /etc/profile BASELINE
+  # =====================================================
+  - name: Create /etc/profile baseline
+    copy:
+      dest: "{{ tmp_dir }}/profile.baseline"
+      content: |
+        # Bash Log
+        PORT=`who am i | awk '{ print $5 }' | sed 's/(//g' | sed 's/)//g'`
+        logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT
+        function history_to_syslog
+        {
+        declare cmd
+        declare p_dir
+        declare LOG_NAME
+        cmd=$(history 1)
+        cmd=$(echo $cmd |awk '{print substr($0,length($1)+2)}')
+        p_dir=$(pwd)
+        LOG_NAME=$(echo $LOGNAME)
+        if [ "$cmd" != "$old_command" ]; then
+        logger -p local5.debug -- Bash SESSION = $$, from_remote_host = $PORT, USER = $LOG_NAME, PWD = $p_dir, CMD = "${cmd}"
+        fi
+        old_command=$cmd
+        }
+        trap history_to_syslog DEBUG || EXIT
+
+  # =====================================================
+  # 2. /root/.bashrc BASELINE (SAME CONTENT)
+  # =====================================================
+  - name: Create /root/.bashrc baseline
+    copy:
+      dest: "{{ tmp_dir }}/bashrc.baseline"
+      content: |
+        # Bash Log
+        PORT=`who am i | awk '{ print $5 }' | sed 's/(//g' | sed 's/)//g'`
+        logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT
+        function history_to_syslog
+        {
+        declare cmd
+        declare p_dir
+        declare LOG_NAME
+        cmd=$(history 1)
+        cmd=$(echo $cmd |awk '{print substr($0,length($1)+2)}')
+        p_dir=$(pwd)
+        LOG_NAME=$(echo $LOGNAME)
+        if [ "$cmd" != "$old_command" ]; then
+        logger -p local5.debug -- Bash SESSION = $$, from_remote_host = $PORT, USER = $LOG_NAME, PWD = $p_dir, CMD = "${cmd}"
+        fi
+        old_command=$cmd
+        }
+        trap history_to_syslog DEBUG || EXIT
+
+  # =====================================================
+  # 3. AUDIT PLUGIN BASELINE
+  # =====================================================
+  - name: Create audit baseline
+    copy:
+      dest: "{{ tmp_dir }}/audit.baseline"
+      content: |
+        active = yes
+
+  # =====================================================
+  # 4. RSYSLOG QRADAR BASELINE
+  # =====================================================
+  - name: Create rsyslog baseline
+    copy:
+      dest: "{{ tmp_dir }}/rsyslog.baseline"
+      content: |
+        *.* @192.168.121.21
+
+        $ModLoad imfile
+        $InputFileName /var/log/audit/audit.log
+        $InputFileTag tag_audit_log_.$hostname:
+        $InputFileStateFile audit_log
+        $InputFileSeverity info
+        $InputFileFacility local6
+        $InputRunFileMonitor
+
+  # =====================================================
+  # 5. BASH LOG FILE BASELINE
+  # =====================================================
+  - name: Create bash log file baseline
+    copy:
+      dest: "{{ tmp_dir }}/bashlog.baseline"
+      content: |
+        bash.log MUST_EXIST
+        local5.debug /var/log/bash.log
+
+  # =====================================================
+  # 6. 50-DEFAULT CONF BASELINE
+  # =====================================================
+  - name: Create rsyslog default rules baseline
+    copy:
+      dest: "{{ tmp_dir }}/default.baseline"
+      content: |
+        auth,authpriv.* /var/log/auth.log
+        *.*;auth,authpriv.none -/var/log/syslog
+        cron.* /var/log/cron.log
+        local1.* /var/log/sudo.log
+        mail.err /var/log/mail.err
+        *.emerg :omusrmsg:*
+
+  # =====================================================
+  # STRICT COMPARE FUNCTION (DIFF BASED)
+  # =====================================================
+
+  - name: Compare /etc/profile STRICT
+    shell: diff -q /etc/profile {{ tmp_dir }}/profile.baseline && echo "PASS" || echo "FAIL"
+    register: profile_check
     changed_when: false
 
-  - name: Check bash logging in /root/.bashrc
-    shell: grep -q "history_to_syslog" /root/.bashrc && echo "PASS" || echo "FAIL"
-    register: bashrc
+  - name: Compare /root/.bashrc STRICT
+    shell: diff -q /root/.bashrc {{ tmp_dir }}/bashrc.baseline && echo "PASS" || echo "FAIL"
+    register: bashrc_check
     changed_when: false
 
-  - debug:
-      msg:
-        - "/etc/profile => {{ profile.stdout }}"
-        - "/root/.bashrc => {{ bashrc.stdout }}"
-
-  # =====================================================
-  # 2. AUDIT PLUGIN CHECK
-  # =====================================================
-  - name: Check audit plugin active=yes
-    shell: grep -R "active *= *yes" /etc/audit /etc/audisp 2>/dev/null && echo "PASS" || echo "FAIL"
-    register: audit
+  - name: Compare audit plugin STRICT
+    shell: grep -q "active = yes" /etc/audit/plugins.d/syslog.conf && echo "PASS" || echo "FAIL"
+    register: audit_check
     changed_when: false
 
-  - debug:
-      msg: "audit plugin => {{ audit.stdout }}"
-
-  # =====================================================
-  # 3. RSYSLOG QRADAR FORWARD
-  # =====================================================
-  - name: Check QRadar forwarding IP
-    shell: grep -R "192.168.121.21" /etc/rsyslog* 2>/dev/null && echo "PASS" || echo "FAIL"
-    register: qradar
+  - name: Compare rsyslog STRICT
+    shell: diff -q /etc/rsyslog.conf {{ tmp_dir }}/rsyslog.baseline && echo "PASS" || echo "FAIL"
+    register: rsyslog_check
     changed_when: false
 
-  - debug:
-      msg: "QRadar => {{ qradar.stdout }}"
-
-  # =====================================================
-  # 4. RSYSLOG AUDIT IMFILE CONFIG
-  # =====================================================
-  - name: Check audit imfile config
+  - name: Check bash log strict
     shell: |
-      grep -q "/var/log/audit/audit.log" /etc/rsyslog* &&
-      grep -q "InputFileFacility local6" /etc/rsyslog* &&
-      grep -q "InputRunFileMonitor" /etc/rsyslog* &&
+      test -f /var/log/bash.log &&
+      grep -q "local5.debug" /etc/rsyslog.d/* &&
       echo "PASS" || echo "FAIL"
-    register: rsyslog_audit
+    register: bashlog_check
     changed_when: false
 
-  - debug:
-      msg: "rsyslog audit => {{ rsyslog_audit.stdout }}"
-
-  # =====================================================
-  # 5. BASH LOG FILE + RSYSLOG RULE
-  # =====================================================
-  - name: Check bash.log file + rsyslog rule
-    shell: |
-      [ -f /var/log/bash.log ] &&
-      grep -q "local5.debug" /etc/rsyslog.d/ 2>/dev/null &&
-      echo "PASS" || echo "FAIL"
-    register: bashlog
+  - name: Compare rsyslog default STRICT
+    shell: diff -q /etc/rsyslog.d/50-default.conf {{ tmp_dir }}/default.baseline && echo "PASS" || echo "FAIL"
+    register: default_check
     changed_when: false
 
-  - debug:
-      msg: "bash logging system => {{ bashlog.stdout }}"
-
   # =====================================================
-  # 6. 50-DEFAULT CONF RULES CHECK
+  # FINAL REPORT
   # =====================================================
-  - name: Check rsyslog default rules
-    shell: |
-      grep -q "auth,authpriv" /etc/rsyslog.d/50-default.conf &&
-      grep -q "cron" /etc/rsyslog.d/50-default.conf &&
-      grep -q "local1" /etc/rsyslog.d/50-default.conf &&
-      grep -q "mail.err" /etc/rsyslog.d/50-default.conf &&
-      grep -q "emerg" /etc/rsyslog.d/50-default.conf &&
-      echo "PASS" || echo "FAIL"
-    register: default_rules
-    changed_when: false
-
-  - debug:
-      msg: "rsyslog rules => {{ default_rules.stdout }}"
-
-  # =====================================================
-  # 7. FINAL RESULT
-  # =====================================================
-  - name: Final compliance summary
+  - name: FINAL STRICT REPORT
     debug:
       msg:
         - "======================================"
-        - "COMPLIANCE REPORT"
+        - "STRICT COMPLIANCE REPORT (BYTE LEVEL)"
         - "======================================"
-        - "/etc/profile => {{ profile.stdout }}"
-        - "/root/.bashrc => {{ bashrc.stdout }}"
-        - "audit plugin => {{ audit.stdout }}"
-        - "QRadar => {{ qradar.stdout }}"
-        - "rsyslog audit => {{ rsyslog_audit.stdout }}"
-        - "bash log => {{ bashlog.stdout }}"
-        - "default rules => {{ default_rules.stdout }}"
+        - "/etc/profile => {{ profile_check.stdout }}"
+        - "/root/.bashrc => {{ bashrc_check.stdout }}"
+        - "audit plugin => {{ audit_check.stdout }}"
+        - "rsyslog => {{ rsyslog_check.stdout }}"
+        - "bash log => {{ bashlog_check.stdout }}"
+        - "default rules => {{ default_check.stdout }}"
         - "======================================"
