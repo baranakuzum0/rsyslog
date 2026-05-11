@@ -1,5 +1,5 @@
 ---
-- name: Linux Security Compliance Report (STRICT LINE CHECK)
+- name: RSYSLOG + Auditd + Bash Log Compliance Check
   hosts: all
   become: yes
   gather_facts: no
@@ -13,7 +13,7 @@
     debug:
       msg:
         - "=================================================="
-        - "      LINUX SECURITY COMPLIANCE REPORT"
+        - "         CONFIG COMPLIANCE REPORT"
         - "=================================================="
         - "HOST : {{ inventory_hostname }}"
         - "=================================================="
@@ -21,12 +21,20 @@
   # =====================================================
   # /etc/profile CHECK
   # =====================================================
-  - name: Validate /etc/profile bash logging
+  - name: Check /etc/profile bash logging
     shell: |
       grep -Fq 'PORT=`who am i | awk' /etc/profile &&
-      grep -Fq 'logger -p local5.debug' /etc/profile &&
-      grep -Fq 'function history_to_syslog' /etc/profile &&
+      grep -Fq 'logger -p local5.debug -t "Bash $LOGNAME $$"' /etc/profile &&
+      grep -Fq 'function history_to_syslog {' /etc/profile &&
+      grep -Fq 'declare cmd' /etc/profile &&
+      grep -Fq 'declare p_dir' /etc/profile &&
+      grep -Fq 'declare LOG_NAME' /etc/profile &&
       grep -Fq 'cmd=$(history 1)' /etc/profile &&
+      grep -Fq 'cmd=$(echo $cmd | awk "{print substr($0,length($1)+2)}")' /etc/profile &&
+      grep -Fq 'p_dir=$(pwd)' /etc/profile &&
+      grep -Fq 'LOG_NAME=$(echo $LOGNAME)' /etc/profile &&
+      grep -Fq 'if [ "$cmd" != "$old_command" ]; then' /etc/profile &&
+      grep -Fq 'logger -p local5.debug -- Bash SESSION=$$, from_remote_host=$PORT, USER=$LOG_NAME, PWD=$p_dir, CMD="${cmd}"' /etc/profile &&
       grep -Fq 'old_command=$cmd' /etc/profile &&
       grep -Fq 'trap history_to_syslog DEBUG || EXIT' /etc/profile &&
       echo "PASS" || echo "FAIL"
@@ -36,12 +44,20 @@
   # =====================================================
   # /root/.bashrc CHECK
   # =====================================================
-  - name: Validate /root/.bashrc bash logging
+  - name: Check /root/.bashrc bash logging
     shell: |
       grep -Fq 'PORT=`who am i | awk' /root/.bashrc &&
-      grep -Fq 'logger -p local5.debug' /root/.bashrc &&
-      grep -Fq 'function history_to_syslog' /root/.bashrc &&
+      grep -Fq 'logger -p local5.debug -t "Bash $LOGNAME $$"' /root/.bashrc &&
+      grep -Fq 'function history_to_syslog {' /root/.bashrc &&
+      grep -Fq 'declare cmd' /root/.bashrc &&
+      grep -Fq 'declare p_dir' /root/.bashrc &&
+      grep -Fq 'declare LOG_NAME' /root/.bashrc &&
       grep -Fq 'cmd=$(history 1)' /root/.bashrc &&
+      grep -Fq 'cmd=$(echo $cmd | awk "{print substr($0,length($1)+2)}")' /root/.bashrc &&
+      grep -Fq 'p_dir=$(pwd)' /root/.bashrc &&
+      grep -Fq 'LOG_NAME=$(echo $LOGNAME)' /root/.bashrc &&
+      grep -Fq 'if [ "$cmd" != "$old_command" ]; then' /root/.bashrc &&
+      grep -Fq 'logger -p local5.debug -- Bash SESSION=$$, from_remote_host=$PORT, USER=$LOG_NAME, PWD=$p_dir, CMD="${cmd}"' /root/.bashrc &&
       grep -Fq 'old_command=$cmd' /root/.bashrc &&
       grep -Fq 'trap history_to_syslog DEBUG || EXIT' /root/.bashrc &&
       echo "PASS" || echo "FAIL"
@@ -51,21 +67,42 @@
   # =====================================================
   # AUDIT PLUGIN CHECK
   # =====================================================
-  - name: Validate audit plugin config
+  - name: Check audit plugin
     shell: |
       (
-        grep -Fq 'active = yes' /etc/audisp/plugins.d/syslog.conf ||
-        grep -Fq 'active = yes' /etc/audit/plugins.d/syslog.conf
+        grep -Fq 'active = yes' /etc/audit/plugins.d/syslog.conf ||
+        grep -Fq 'active = yes' /etc/audisp/plugins.d/syslog.conf
       ) && echo "PASS" || echo "FAIL"
     register: audit_check
     changed_when: false
 
   # =====================================================
-  # RSYSLOG QRADAR CHECK
+  # BASH LOG FILE CHECK
   # =====================================================
-  - name: Validate rsyslog QRadar forwarding
+  - name: Check bash log file
     shell: |
-      grep -Fq '192.168.121.21' /etc/rsyslog.conf &&
+      test -f /var/log/bash.log &&
+      stat -c %a /var/log/bash.log | grep -Fxq '640' &&
+      echo "PASS" || echo "FAIL"
+    register: bashlog_check
+    changed_when: false
+
+  # =====================================================
+  # BASH.CONF CHECK
+  # =====================================================
+  - name: Check bash.conf
+    shell: |
+      grep -Eq '^local5\.debug[[:space:]]+/var/log/bash\.log$' /etc/rsyslog.d/bash.conf &&
+      echo "PASS" || echo "FAIL"
+    register: bashconf_check
+    changed_when: false
+
+  # =====================================================
+  # RSYSLOG.CONF CHECK
+  # =====================================================
+  - name: Check rsyslog.conf
+    shell: |
+      grep -Eq '^\*\.\* @@192\.168\.121\.21:514$' /etc/rsyslog.conf &&
       grep -Fq '$ModLoad imfile' /etc/rsyslog.conf &&
       grep -Fq '$InputFileName /var/log/audit/audit.log' /etc/rsyslog.conf &&
       grep -Fq '$InputFileTag tag_audit_log_.$hostname:' /etc/rsyslog.conf &&
@@ -78,30 +115,9 @@
     changed_when: false
 
   # =====================================================
-  # BASH LOG FILE CHECK
+  # 50-DEFAULT.CONF CHECK
   # =====================================================
-  - name: Validate bash log file
-    shell: |
-      test -f /var/log/bash.log &&
-      stat -c %a /var/log/bash.log | grep -Fxq '640' &&
-      echo "PASS" || echo "FAIL"
-    register: bashlog_check
-    changed_when: false
-
-  # =====================================================
-  # BASH RSYSLOG RULE CHECK
-  # =====================================================
-  - name: Validate bash rsyslog rule
-    shell: |
-      grep -Fq 'local5.debug           /var/log/bash.log' /etc/rsyslog.d/bash.conf &&
-      echo "PASS" || echo "FAIL"
-    register: bashrule_check
-    changed_when: false
-
-  # =====================================================
-  # 50-DEFAULT RULES CHECK
-  # =====================================================
-  - name: Validate rsyslog default rules
+  - name: Check 50-default.conf
     shell: |
       grep -Fq 'auth,authpriv.*                 /var/log/auth.log' /etc/rsyslog.d/50-default.conf &&
       grep -Fq '*.*;auth,authpriv.none          -/var/log/syslog' /etc/rsyslog.d/50-default.conf &&
@@ -110,7 +126,7 @@
       grep -Fq 'mail.err                        /var/log/mail.err' /etc/rsyslog.d/50-default.conf &&
       grep -Fq '*.emerg                         :omusrmsg:*' /etc/rsyslog.d/50-default.conf &&
       echo "PASS" || echo "FAIL"
-    register: default_rules_check
+    register: default_check
     changed_when: false
 
   # =====================================================
@@ -120,13 +136,13 @@
     debug:
       msg:
         - "=================================================="
-        - "FINAL SECURITY COMPLIANCE REPORT"
+        - "FINAL CONFIG REPORT"
         - "=================================================="
-        - "/etc/profile          : {{ profile_check.stdout }}"
-        - "/root/.bashrc         : {{ bashrc_check.stdout }}"
-        - "audit plugin          : {{ audit_check.stdout }}"
-        - "rsyslog qradar        : {{ rsyslog_check.stdout }}"
-        - "/var/log/bash.log     : {{ bashlog_check.stdout }}"
-        - "bash.conf             : {{ bashrule_check.stdout }}"
-        - "50-default.conf       : {{ default_rules_check.stdout }}"
+        - "/etc/profile      : {{ profile_check.stdout }}"
+        - "/root/.bashrc     : {{ bashrc_check.stdout }}"
+        - "audit plugin      : {{ audit_check.stdout }}"
+        - "/var/log/bash.log : {{ bashlog_check.stdout }}"
+        - "bash.conf         : {{ bashconf_check.stdout }}"
+        - "rsyslog.conf      : {{ rsyslog_check.stdout }}"
+        - "50-default.conf   : {{ default_check.stdout }}"
         - "=================================================="
