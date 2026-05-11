@@ -1,200 +1,127 @@
 ---
-- name: BASH VE AUDIT LOG KONFIGURASYON KONTROL PLAYBOOK'U
+- name: Linux Security Compliance Report (CLEAN OUTPUT)
   hosts: all
-  gather_facts: yes
-  vars:
-    bash_log_kodu: |
-      PORT=`who am i | awk '{ print $5 }' | sed 's/(//g' | sed 's/)//g'`
-      logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT
-      function history_to_syslog
-      {
-      declare cmd
-      declare p_dir
-      declare LOG_NAME
-      cmd=$(history 1)
-      cmd=$(echo $cmd |awk '{print substr($0,length($1)+2)}')
-      p_dir=$(pwd)
-      LOG_NAME=$(echo $LOGNAME)
-      if [ "$cmd" != "$old_command" ]; then
-      logger -p local5.debug -- Bash SESSION = $$, from_remote_host = $PORT, USER = $LOG_NAME, PWD = $p_dir, CMD = "${cmd}"
-      fi
-      old_command=$cmd
-      }
-      trap history_to_syslog DEBUG || EXIT
-
-    audit_log_bloku: |
-      $ModLoad imfile
-      $InputFileName /var/log/audit/audit.log
-      $InputFileTag tag_audit_log_.$hostname:
-      $InputFileStateFile audit_log
-      $InputFileSeverity info
-      $InputFileFacility local6
-      $InputRunFileMonitor
-
-    default_50_kurallar:
-      - "auth,authpriv.*                 /var/log/auth.log"
-      - "*.*;auth,authpriv.none          -/var/log/syslog"
-      - "cron.*                          /var/log/cron.log"
-      - "local1.*                        /var/log/sudo.log"
-      - "mail.err                        /var/log/mail.err"
-      - "*.emerg                         :omusrmsg:*"
+  become: yes
+  gather_facts: no
 
   tasks:
-    - name: "KONTROL-1: /etc/profile bash log kodu"
-      ansible.builtin.lineinfile:
-        path: /etc/profile
-        line: "{{ bash_log_kodu }}"
-        state: present
-      check_mode: yes
-      register: profile_kontrol
-      failed_when: false
 
-    - name: "RAPOR-1: /etc/profile"
-      ansible.builtin.debug:
-        msg: "=== /etc/profile: {% if not profile_kontrol.changed %}DOGRU{% else %}HATALI{% endif %} ==="
+  # =====================================================
+  # HEADER
+  # =====================================================
+  - name: Start report
+    debug:
+      msg:
+        - "=================================================="
+        - "        LINUX SECURITY COMPLIANCE REPORT"
+        - "=================================================="
+        - "HOST: {{ inventory_hostname }}"
+        - "=================================================="
 
-    - name: "KONTROL-2: /root/.bashrc bash log kodu"
-      ansible.builtin.lineinfile:
-        path: /root/.bashrc
-        line: "{{ bash_log_kodu }}"
-        state: present
-      check_mode: yes
-      register: bashrc_kontrol
-      failed_when: false
+  # =====================================================
+  # BASH LOGGING CHECK
+  # =====================================================
+  - name: Check /etc/profile bash logging
+    shell: grep -q "history_to_syslog" /etc/profile && echo "YES" || echo "NO"
+    register: p1
+    changed_when: false
 
-    - name: "RAPOR-2: /root/.bashrc"
-      ansible.builtin.debug:
-        msg: "=== /root/.bashrc: {% if not bashrc_kontrol.changed %}DOGRU{% else %}HATALI{% endif %} ==="
+  - name: Check /root/.bashrc bash logging
+    shell: grep -q "history_to_syslog" /root/.bashrc && echo "YES" || echo "NO"
+    register: p2
+    changed_when: false
 
-    - name: "KONTROL-3: Audit plugin dosyasi"
-      ansible.builtin.stat:
-        path: "{{ item }}"
-      loop:
-        - /etc/audisp/plugins.d/syslog.conf
-        - /etc/audit/plugins.d/syslog.conf
-      register: audit_plugin_stat
+  - debug:
+      msg:
+        - "[BASH LOGGING]"
+        - "/etc/profile  : {{ p1.stdout }}"
+        - "/root/.bashrc : {{ p2.stdout }}"
 
-    - name: "Set audit plugin dosyasi"
-      ansible.builtin.set_fact:
-        audit_plugin_dosyasi: "{{ (audit_plugin_stat.results | selectattr('stat.exists', 'equalto', true) | first).stat.path | default('') }}"
-      when: audit_plugin_stat.results | selectattr('stat.exists', 'equalto', true) | list | length > 0
+  # =====================================================
+  # AUDIT PLUGIN
+  # =====================================================
+  - name: Check audit plugin
+    shell: grep -R "active *= *yes" /etc/audit /etc/audisp 2>/dev/null && echo "YES" || echo "NO"
+    register: audit
+    changed_when: false
 
-    - name: "KONTROL-4: active = yes kontrolu"
-      ansible.builtin.lineinfile:
-        path: "{{ audit_plugin_dosyasi }}"
-        line: "active = yes"
-        state: present
-      check_mode: yes
-      register: audit_plugin_kontrol
-      when: audit_plugin_dosyasi | length > 0
+  - debug:
+      msg:
+        - "[AUDIT]"
+        - "plugin : {{ audit.stdout }}"
 
-    - name: "RAPOR-4: Audit plugin"
-      ansible.builtin.debug:
-        msg: "=== Audit plugin active=yes: {% if audit_plugin_kontrol is defined and not audit_plugin_kontrol.changed %}DOGRU{% elif audit_plugin_kontrol is defined %}HATALI{% else %}DOSYA YOK{% endif %} ==="
-      when: audit_plugin_kontrol is defined
+  # =====================================================
+  # QRADAR
+  # =====================================================
+  - name: Check QRadar forwarding
+    shell: grep -R "192.168.121.21" /etc/rsyslog* 2>/dev/null && echo "YES" || echo "NO"
+    register: qradar
+    changed_when: false
 
-    - name: "KONTROL-5: QRadar IP"
-      ansible.builtin.lineinfile:
-        path: /etc/rsyslog.conf
-        line: "192.168.121.21"
-        state: present
-      check_mode: yes
-      register: qradar_ip_kontrol
-      failed_when: false
+  - debug:
+      msg:
+        - "[QRADAR]"
+        - "forward : {{ qradar.stdout }}"
 
-    - name: "RAPOR-5: QRadar IP"
-      ansible.builtin.debug:
-        msg: "=== QRadar IP (192.168.121.21): {% if not qradar_ip_kontrol.changed %}DOGRU{% else %}HATALI{% endif %} ==="
+  # =====================================================
+  # AUDIT IMFILE
+  # =====================================================
+  - name: Check audit rsyslog pipeline
+    shell: grep -q "/var/log/audit/audit.log" /etc/rsyslog* && echo "YES" || echo "NO"
+    register: audit_pipe
+    changed_when: false
 
-    - name: "KONTROL-6: Audit log blogu"
-      ansible.builtin.blockinfile:
-        path: /etc/rsyslog.conf
-        block: "{{ audit_log_bloku }}"
-        marker: "# {mark} AUDIT LOG BLOCK"
-        state: present
-      check_mode: yes
-      register: audit_log_blogu_kontrol
-      failed_when: false
+  - debug:
+      msg:
+        - "[AUDIT PIPE]"
+        - "imfile : {{ audit_pipe.stdout }}"
 
-    - name: "RAPOR-6: Audit log blogu"
-      ansible.builtin.debug:
-        msg: "=== Audit log blogu: {% if not audit_log_blogu_kontrol.changed %}DOGRU{% else %}HATALI{% endif %} ==="
+  # =====================================================
+  # BASH LOG FILE SYSTEM
+  # =====================================================
+  - name: Check bash log system
+    shell: test -f /var/log/bash.log && grep -q "local5.debug" /etc/rsyslog.d/ && echo "YES" || echo "NO"
+    register: bashlog
+    changed_when: false
 
-    - name: "KONTROL-7: bash.conf dosyasi"
-      ansible.builtin.stat:
-        path: /etc/rsyslog.d/bash.conf
-      register: bash_conf_stat
+  - debug:
+      msg:
+        - "[BASH LOG FILE]"
+        - "system : {{ bashlog.stdout }}"
 
-    - name: "KONTROL-7B: bash.conf icerik"
-      ansible.builtin.lineinfile:
-        path: /etc/rsyslog.d/bash.conf
-        line: "local5.debug           /var/log/bash.log"
-        state: present
-      check_mode: yes
-      register: bash_conf_icerik_kontrol
-      when: bash_conf_stat.stat.exists
-      failed_when: false
+  # =====================================================
+  # RSYSLOG DEFAULT RULES
+  # =====================================================
+  - name: Check rsyslog default rules
+    shell: |
+      grep -q "auth,authpriv" /etc/rsyslog.d/50-default.conf &&
+      grep -q "cron" /etc/rsyslog.d/50-default.conf &&
+      grep -q "local1" /etc/rsyslog.d/50-default.conf &&
+      grep -q "mail.err" /etc/rsyslog.d/50-default.conf &&
+      grep -q "emerg" /etc/rsyslog.d/50-default.conf &&
+      echo "YES" || echo "NO"
+    register: rules
+    changed_when: false
 
-    - name: "RAPOR-7: bash.conf"
-      ansible.builtin.debug:
-        msg: "=== bash.conf: Dosya={% if bash_conf_stat.stat.exists %}VAR{% else %}YOK{% endif %} Icerik={% if bash_conf_icerik_kontrol is defined and not bash_conf_icerik_kontrol.changed %}DOGRU{% elif bash_conf_icerik_kontrol is defined %}HATALI{% else %}YOK{% endif %} ==="
+  - debug:
+      msg:
+        - "[RSYSLOG RULES]"
+        - "default : {{ rules.stdout }}"
 
-    - name: "KONTROL-8: bash.log izin"
-      ansible.builtin.stat:
-        path: /var/log/bash.log
-      register: bash_log_stat
-
-    - name: "RAPOR-8: bash.log"
-      ansible.builtin.debug:
-        msg: "=== bash.log: Dosya={% if bash_log_stat.stat.exists %}VAR{% else %}YOK{% endif %} Izin={% if bash_log_stat.stat.exists and bash_log_stat.stat.mode == '0640' %}DOGRU(640){% elif bash_log_stat.stat.exists %}HATALI({{ bash_log_stat.stat.mode }}){% else %}N/A{% endif %} ==="
-
-    - name: "KONTROL-9: 50-default.conf kurallari"
-      ansible.builtin.lineinfile:
-        path: /etc/rsyslog.d/50-default.conf
-        line: "{{ item }}"
-        state: present
-      check_mode: yes
-      register: default50_kontroller
-      loop: "{{ default_50_kurallar }}"
-      failed_when: false
-
-    - name: "RAPOR-9: 50-default.conf sonuclari"
-      ansible.builtin.debug:
-        var: default50_kontroller.results
-
-    - name: "KONTROL-10A: Rsyslog servisi"
-      ansible.builtin.shell: systemctl is-active rsyslog
-      register: rsyslog_durum
-      failed_when: false
-      changed_when: false
-
-    - name: "RAPOR-10A: Rsyslog"
-      ansible.builtin.debug:
-        msg: "=== Rsyslog: {% if rsyslog_durum.rc == 0 %}AKTIF{% else %}AKTIF DEGIL{% endif %} ==="
-
-    - name: "KONTROL-10B: Auditd servisi"
-      ansible.builtin.shell: systemctl is-active auditd
-      register: auditd_durum
-      failed_when: false
-      changed_when: false
-
-    - name: "RAPOR-10B: Auditd"
-      ansible.builtin.debug:
-        msg: "=== Auditd: {% if auditd_durum.rc == 0 %}AKTIF{% else %}AKTIF DEGIL{% endif %} ==="
-
-    - name: "FINAL RAPOR"
-      ansible.builtin.debug:
-        msg:
-          - "************************************************"
-          - "FINAL SONUCLAR"
-          - "************************************************"
-          - "1. /etc/profile: {% if not profile_kontrol.changed %}DOGRU{% else %}HATALI{% endif %}"
-          - "2. /root/.bashrc: {% if not bashrc_kontrol.changed %}DOGRU{% else %}HATALI{% endif %}"
-          - "3. Audit plugin: {% if audit_plugin_kontrol is defined and not audit_plugin_kontrol.changed %}DOGRU{% elif audit_plugin_kontrol is defined %}HATALI{% else %}DOSYA YOK{% endif %}"
-          - "4. QRadar IP: {% if not qradar_ip_kontrol.changed %}DOGRU{% else %}HATALI{% endif %}"
-          - "5. Audit log blogu: {% if not audit_log_blogu_kontrol.changed %}DOGRU{% else %}HATALI{% endif %}"
-          - "6. bash.conf: {% if bash_conf_stat.stat.exists and bash_conf_icerik_kontrol is defined and not bash_conf_icerik_kontrol.changed %}DOGRU{% elif not bash_conf_stat.stat.exists %}DOSYA YOK{% else %}HATALI{% endif %}"
-          - "7. bash.log: {% if bash_log_stat.stat.exists and bash_log_stat.stat.mode == '0640' %}DOGRU{% elif not bash_log_stat.stat.exists %}DOSYA YOK{% else %}HATALI{% endif %}"
-          - "8. Rsyslog: {% if rsyslog_durum.rc == 0 %}AKTIF{% else %}AKTIF DEGIL{% endif %}"
-          - "9. Auditd: {% if auditd_durum.rc == 0 %}AKTIF{% else %}AKTIF DEGIL{% endif %}"
-          - "************************************************"
+  # =====================================================
+  # FINAL REPORT
+  # =====================================================
+  - name: Final report
+    debug:
+      msg:
+        - "=================================================="
+        - "FINAL COMPLIANCE REPORT"
+        - "=================================================="
+        - "BASH PROFILE   : {{ p1.stdout }}"
+        - "BASH RC        : {{ p2.stdout }}"
+        - "AUDIT PLUGIN   : {{ audit.stdout }}"
+        - "QRADAR         : {{ qradar.stdout }}"
+        - "AUDIT PIPE     : {{ audit_pipe.stdout }}"
+        - "BASH LOG       : {{ bashlog.stdout }}"
+        - "RSYSLOG RULES   : {{ rules.stdout }}"
+        - "=================================================="
