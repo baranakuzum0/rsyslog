@@ -1,98 +1,146 @@
 ---
-- name: Linux Security Compliance Report (Readable)
+- name: SLES Security Config Verification (NO CHANGE - READ ONLY)
   hosts: all
   become: yes
 
   tasks:
 
-  # -------------------------
-  # HEADER
-  # -------------------------
-  - name: Start report header
-    debug:
-      msg:
-        - "======================================"
-        - "     SECURITY COMPLIANCE REPORT       "
-        - "======================================"
-
-  # -------------------------
-  # /etc/profile
-  # -------------------------
-  - name: Check /etc/profile
-    shell: grep -q "logger" /etc/profile && echo "PASS" || echo "FAIL"
-    register: profile
+  # =====================================================
+  # 1. SERVICE STATUS CHECK
+  # =====================================================
+  - name: Check rsyslog service
+    shell: systemctl is-active rsyslog
+    register: rsyslog_service
+    changed_when: false
+    failed_when: false
 
   - debug:
-      msg: "/etc/profile (bash logging) => {{ profile.stdout }}"
+      msg: "rsyslog service => {{ rsyslog_service.stdout }}"
 
-  # -------------------------
-  # /root/.bashrc
-  # -------------------------
-  - name: Check /root/.bashrc
-    shell: grep -q "history_to_syslog\|trap\|logger" /root/.bashrc && echo "PASS" || echo "FAIL"
-    register: bashrc
+  - name: Check auditd service
+    shell: systemctl is-active auditd
+    register: auditd_service
+    changed_when: false
+    failed_when: false
 
   - debug:
-      msg: "/root/.bashrc (bash logging) => {{ bashrc.stdout }}"
+      msg: "auditd service => {{ auditd_service.stdout }}"
 
-  # -------------------------
-  # audit plugin
-  # -------------------------
-  - name: Check audit syslog plugin
+  # =====================================================
+  # 2. BASH LOGGING CHECK (/etc/profile)
+  # =====================================================
+  - name: Check /etc/profile bash logging block
+    shell: |
+      grep -q "history_to_syslog" /etc/profile &&
+      grep -q "logger -p local5.debug" /etc/profile &&
+      grep -q "trap history_to_syslog DEBUG" /etc/profile &&
+      echo "OK" || echo "MISSING"
+    register: profile_check
+    changed_when: false
+
+  - debug:
+      msg: "/etc/profile => {{ profile_check.stdout }}"
+
+  # =====================================================
+  # 3. BASH LOGGING CHECK (/root/.bashrc)
+  # =====================================================
+  - name: Check /root/.bashrc bash logging
+    shell: |
+      grep -q "history_to_syslog" /root/.bashrc &&
+      grep -q "logger -p local5.debug" /root/.bashrc &&
+      echo "OK" || echo "MISSING"
+    register: bashrc_check
+    changed_when: false
+
+  - debug:
+      msg: "/root/.bashrc => {{ bashrc_check.stdout }}"
+
+  # =====================================================
+  # 4. AUDIT PLUGIN CHECK
+  # =====================================================
+  - name: Check audit plugin syslog (new path)
     stat:
       path: /etc/audit/plugins.d/syslog.conf
     register: audit_new
 
-  - debug:
-      msg: "Audit plugin (/etc/audit) => {{ 'PASS' if audit_new.stat.exists else 'FAIL' }}"
-
-  - name: Check old audit plugin path
+  - name: Check audit plugin syslog (old path)
     stat:
       path: /etc/audisp/plugins.d/syslog.conf
     register: audit_old
 
   - debug:
-      msg: "Audit plugin (/etc/audisp) => {{ 'PASS' if audit_old.stat.exists else 'FAIL' }}"
+      msg:
+        - "audit new plugin => {{ audit_new.stat.exists }}"
+        - "audit old plugin => {{ audit_old.stat.exists }}"
 
-  # -------------------------
-  # audit active
-  # -------------------------
-  - name: Check audit active
-    shell: grep -R "active *= *yes" /etc/audit /etc/audisp 2>/dev/null | wc -l
+  - name: Check active=yes in audit plugin
+    shell: grep -R "active *= *yes" /etc/audit /etc/audisp 2>/dev/null || echo "NOT FOUND"
     register: audit_active
     changed_when: false
 
   - debug:
-      msg: "Audit ACTIVE config => {{ 'PASS' if audit_active.stdout|int > 0 else 'FAIL' }}"
+      msg: "audit active => {{ audit_active.stdout }}"
 
-  # -------------------------
-  # rsyslog audit forwarding
-  # -------------------------
-  - name: Check rsyslog audit forwarding
-    shell: grep -R "/var/log/audit/audit.log" /etc/rsyslog* 2>/dev/null | wc -l
+  # =====================================================
+  # 5. RSYSLOG AUDIT IMFILE CHECK
+  # =====================================================
+  - name: Check rsyslog audit imfile config
+    shell: |
+      grep -q "/var/log/audit/audit.log" /etc/rsyslog.conf /etc/rsyslog.d/* &&
+      grep -q "InputFileName" /etc/rsyslog.conf /etc/rsyslog.d/* &&
+      grep -q "local6" /etc/rsyslog.conf /etc/rsyslog.d/* &&
+      echo "OK" || echo "MISSING"
     register: rsyslog_audit
     changed_when: false
 
   - debug:
-      msg: "RSYSLOG audit forward => {{ 'PASS' if rsyslog_audit.stdout|int > 0 else 'FAIL' }}"
+      msg: "rsyslog audit config => {{ rsyslog_audit.stdout }}"
 
-  # -------------------------
-  # bash.log file
-  # -------------------------
-  - name: Check bash.log
-    stat:
-      path: /var/log/bash.log
-    register: bashlog
+  # =====================================================
+  # 6. QRADAR IP CHECK
+  # =====================================================
+  - name: Check QRadar destination IP
+    shell: grep -R "192.168.121.21" /etc/rsyslog* 2>/dev/null || echo "MISSING"
+    register: qradar
+    changed_when: false
 
   - debug:
-      msg: "bash.log file => {{ 'PASS' if bashlog.stat.exists else 'FAIL' }}"
+      msg: "QRadar config => {{ qradar.stdout }}"
 
-  # -------------------------
-  # FOOTER
-  # -------------------------
-  - name: End report
-    debug:
-      msg:
-        - "======================================"
-        - "           REPORT END                 "
-        - "======================================"
+  # =====================================================
+  # 7. BASH LOG FILE CHECK
+  # =====================================================
+  - name: Check bash log file
+    stat:
+      path: /var/log/bash.log
+    register: bash_log
+
+  - debug:
+      msg: "bash.log => {{ bash_log.stat.exists }}"
+
+  # =====================================================
+  # 8. RSYSLOG BASH RULE CHECK
+  # =====================================================
+  - name: Check bash rsyslog config
+    shell: grep -q "local5.debug" /etc/rsyslog.d/* && echo "OK" || echo "MISSING"
+    register: bash_rsyslog
+    changed_when: false
+
+  - debug:
+      msg: "bash rsyslog => {{ bash_rsyslog.stdout }}"
+
+  # =====================================================
+  # 9. DEFAULT RSYSLOG RULES CHECK
+  # =====================================================
+  - name: Check rsyslog default rules
+    shell: |
+      grep -q "auth,authpriv" /etc/rsyslog.d/50-default.conf &&
+      grep -q "cron" /etc/rsyslog.d/50-default.conf &&
+      grep -q "local1" /etc/rsyslog.d/50-default.conf &&
+      grep -q "syslog" /etc/rsyslog.d/50-default.conf &&
+      echo "OK" || echo "MISSING"
+    register: rsyslog_default
+    changed_when: false
+
+  - debug:
+      msg: "rsyslog default rules => {{ rsyslog_default.stdout }}"
