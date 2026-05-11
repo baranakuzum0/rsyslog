@@ -1,92 +1,171 @@
-- name: Security Compliance Audit (No Fix Mode)
+- name: Security Compliance Audit Report
   hosts: all
   become: yes
 
   vars:
-    qradar_ip: "192.168.121.21:514"
-    qradar_pattern: "*.* @@192.168.121.21:514"
+    qradar_rule: "*.* @@192.168.121.21:514"
 
   tasks:
 
-    # -----------------------------
-    # 1. SERVİS KONTROLÜ
-    # -----------------------------
-    - name: Check auditd service
-      command: systemctl is-active auditd
-      register: auditd_status
-      failed_when: false
-      changed_when: false
+  # ==================================================
+  # Auditd Servisinin Kurulumu ve Kontrolü
+  # ==================================================
+  - name: Auditd kontrolü
+    block:
+      - name: Auditd package check
+        command: dpkg -s auditd
+        register: auditd_pkg
+        failed_when: false
+        changed_when: false
 
-    - name: Check rsyslog service
-      command: systemctl is-active rsyslog
-      register: rsyslog_status
-      failed_when: false
-      changed_when: false
+      - name: Auditd service check
+        command: systemctl is-active auditd
+        register: auditd_service
+        failed_when: false
+        changed_when: false
 
-    # -----------------------------
-    # 2. BASH LOGGING
-    # -----------------------------
-    - name: Check bash.log exists
-      stat:
-        path: /var/log/bash.log
-      register: bash_log
+      - name: Auditd result
+        debug:
+          msg: |
+            Auditd Servisinin Kurulumu ve Kontrolü:
+            Paket: {{ 'Kurulu' if auditd_pkg.rc == 0 else 'Kurulu DEĞİL' }}
+            Servis: {{ 'ÇALIŞIYOR' if auditd_service.stdout == 'active' else 'ÇALIŞMIYOR' }}
 
-    - name: Check /etc/profile logging
-      shell: grep -F "history_to_syslog" /etc/profile
-      register: profile_check
-      failed_when: false
-      changed_when: false
+  # ==================================================
+  # /etc/profile
+  # ==================================================
+  - name: Profile kontrol
+    shell: grep -F "history_to_syslog" /etc/profile
+    register: profile_check
+    failed_when: false
+    changed_when: false
 
-    - name: Check root bashrc logging
-      shell: grep -F "history_to_syslog" /root/.bashrc
-      register: bashrc_check
-      failed_when: false
-      changed_when: false
+  - name: Profile result
+    debug:
+      msg: |
+        /etc/profile:
+        Logging: {{ 'MEVCUT' if profile_check.rc == 0 else 'YOK' }}
 
-    # -----------------------------
-    # 3. AUDIT PLUGIN
-    # -----------------------------
-    - name: Check audit syslog plugin
-      shell: grep -F "active = yes" /etc/audit/plugins.d/syslog.conf
-      register: audit_plugin
-      failed_when: false
-      changed_when: false
+  # ==================================================
+  # /root/.bashrc
+  # ==================================================
+  - name: Root bashrc kontrol
+    shell: grep -F "history_to_syslog" /root/.bashrc
+    register: bashrc_check
+    failed_when: false
+    changed_when: false
 
-    # -----------------------------
-    # 4. QRADAR CONFIG
-    # -----------------------------
-    - name: Check QRadar forwarding in rsyslog.conf
-      shell: grep -F "*.* @@192.168.121.21:514" /etc/rsyslog.conf
-      register: qradar_check
-      failed_when: false
-      changed_when: false
+  - name: Bashrc result
+    debug:
+      msg: |
+        /root/.bashrc:
+        Logging: {{ 'MEVCUT' if bashrc_check.rc == 0 else 'YOK' }}
 
-    # -----------------------------
-    # 5. RSYSLOG FILES
-    # -----------------------------
-    - name: Check bash rsyslog config
-      stat:
-        path: /etc/rsyslog.d/bash.conf
-      register: bash_rsyslog_conf
+  # ==================================================
+  # Audit Plugin Kontrolü
+  # ==================================================
+  - name: Audit plugin kontrol (audisp)
+    shell: grep -F "active = yes" /etc/audisp/plugins.d/syslog.conf
+    register: audisp_plugin
+    failed_when: false
+    changed_when: false
 
-    - name: Check audit imfile config
-      shell: grep -F "/var/log/audit/audit.log" /etc/rsyslog.conf
-      register: audit_imfile
-      failed_when: false
-      changed_when: false
+  - name: Audit plugin kontrol (audit)
+    shell: grep -F "active = yes" /etc/audit/plugins.d/syslog.conf
+    register: audit_plugin
+    failed_when: false
+    changed_when: false
 
-    # -----------------------------
-    # 6. RAPOR
-    # -----------------------------
-    - name: Compliance Report
-      debug:
-        msg:
-          - "AUDITD: {{ 'OK' if auditd_status.stdout == 'active' else 'MISSING' }}"
-          - "RSYSLOG: {{ 'OK' if rsyslog_status.stdout == 'active' else 'MISSING' }}"
-          - "BASH LOG FILE: {{ 'OK' if bash_log.stat.exists else 'MISSING' }}"
-          - "PROFILE LOG: {{ 'OK' if profile_check.rc == 0 else 'MISSING' }}"
-          - "ROOT BASHRC LOG: {{ 'OK' if bashrc_check.rc == 0 else 'MISSING' }}"
-          - "AUDIT PLUGIN: {{ 'OK' if audit_plugin.rc == 0 else 'MISSING' }}"
-          - "QRADAR FORWARD: {{ 'OK' if qradar_check.rc == 0 else 'MISSING' }}"
-          - "RSYSLOG BASH CONF: {{ 'OK' if bash_rsyslog_conf.stat.exists else 'MISSING' }}"
-          - "AUDIT IMFILE: {{ 'OK' if audit_imfile.rc == 0 else 'MISSING' }}"
+  - name: Audit plugin result
+    debug:
+      msg: |
+        Audit Plugin Kontrolü:
+        Audisp: {{ 'ACTIVE' if audisp_plugin.rc == 0 else 'PASSIVE / YOK' }}
+        Audit: {{ 'ACTIVE' if audit_plugin.rc == 0 else 'PASSIVE / YOK' }}
+
+  # ==================================================
+  # QRadar + Rsyslog
+  # ==================================================
+  - name: QRadar kontrol
+    shell: grep -F "*.* @@192.168.121.21:514" /etc/rsyslog.conf
+    register: qradar_check
+    failed_when: false
+    changed_when: false
+
+  - name: Audit imfile kontrol
+    shell: grep -F "/var/log/audit/audit.log" /etc/rsyslog.conf
+    register: audit_imfile
+    failed_when: false
+    changed_when: false
+
+  - name: QRadar result
+    debug:
+      msg: |
+        Rsyslog / QRadar Konfigürasyonu:
+        Forwarding: {{ 'AKTİF' if qradar_check.rc == 0 else 'YOK' }}
+        Audit Log: {{ 'AKTİF' if audit_imfile.rc == 0 else 'YOK' }}
+
+  # ==================================================
+  # Bash Log Dosyası
+  # ==================================================
+  - name: Bash log kontrol
+    stat:
+      path: /var/log/bash.log
+    register: bash_log
+
+  - name: Bash log permission kontrol
+    command: stat -c "%a" /var/log/bash.log
+    register: bash_log_perm
+    failed_when: false
+    changed_when: false
+
+  - name: Bash log result
+    debug:
+      msg: |
+        Bash Log Dosyası:
+        Durum: {{ 'MEVCUT' if bash_log.stat.exists else 'YOK' }}
+        Permission: {{ bash_log_perm.stdout if bash_log_perm.rc == 0 else 'UNKNOWN' }}
+
+  # ==================================================
+  # Rsyslog Bash Konfig
+  # ==================================================
+  - name: Bash rsyslog config kontrol
+    stat:
+      path: /etc/rsyslog.d/bash.conf
+    register: bash_conf
+
+  - name: Bash rsyslog result
+    debug:
+      msg: |
+        /etc/rsyslog.d/bash.conf:
+        Durum: {{ 'MEVCUT' if bash_conf.stat.exists else 'YOK' }}
+
+  # ==================================================
+  # 50-default.conf kontrol
+  # ==================================================
+  - name: Default rsyslog config kontrol
+    shell: grep -E "auth|cron|mail|emerg|syslog" /etc/rsyslog.d/50-default.conf
+    register: default_conf
+    failed_when: false
+    changed_when: false
+
+  - name: Default config result
+    debug:
+      msg: |
+        /etc/rsyslog.d/50-default.conf:
+        Durum: {{ 'KONTROL EDİLDİ' if default_conf.rc == 0 else 'EKSİK' }}
+
+  # ==================================================
+  # RSYSLOG SERVICE
+  # ==================================================
+  - name: Rsyslog service check
+    command: systemctl is-active rsyslog
+    register: rsyslog_service
+    failed_when: false
+    changed_when: false
+
+  - name: Rsyslog result
+    debug:
+      msg: |
+        Rsyslog Servisi:
+        Durum: {{ 'ÇALIŞIYOR' if rsyslog_service.stdout == 'active' else 'ÇALIŞMIYOR' }}
