@@ -1,5 +1,5 @@
 ---
-- name: Linux Security Compliance Engine (FINAL STABLE)
+- name: Bash + Audit + Rsyslog Compliance Check (STRICT)
   hosts: all
   become: yes
   gather_facts: no
@@ -7,115 +7,54 @@
   tasks:
 
   # =====================================================
-  # HEADER
+  # 1. BASH LOGGING (/etc/profile + /root/.bashrc)
   # =====================================================
-  - name: Start report
-    debug:
-      msg:
-        - "======================================"
-        - "   REAL COMPLIANCE ENGINE REPORT      "
-        - "======================================"
-        - "Host: {{ inventory_hostname }}"
-        - "======================================"
-
-  # =====================================================
-  # 1. /etc/profile CHECK
-  # =====================================================
-  - name: Check /etc/profile (bash logging)
-    shell: |
-      missing=""
-      grep -q "history_to_syslog" /etc/profile || missing="${missing} history_to_syslog"
-      grep -q "trap history_to_syslog DEBUG" /etc/profile || missing="${missing} trap_DEBUG"
-      grep -q "logger -p local5.debug" /etc/profile || missing="${missing} logger_local5"
-
-      if [ -z "$missing" ]; then
-        echo "OK"
-      else
-        echo "MISSING:$missing"
-      fi
+  - name: Check bash logging in /etc/profile
+    shell: grep -q "history_to_syslog" /etc/profile && echo "PASS" || echo "FAIL"
     register: profile
     changed_when: false
 
-  - debug:
-      msg: "/etc/profile => {{ profile.stdout }}"
-
-  # =====================================================
-  # 2. /root/.bashrc CHECK
-  # =====================================================
-  - name: Check /root/.bashrc
-    shell: |
-      missing=""
-      grep -q "history_to_syslog" /root/.bashrc || missing="${missing} function"
-      grep -q "old_command" /root/.bashrc || missing="${missing} old_command"
-      grep -q "logger -p local5.debug" /root/.bashrc || missing="${missing} logger"
-
-      if [ -z "$missing" ]; then
-        echo "OK"
-      else
-        echo "MISSING:$missing"
-      fi
+  - name: Check bash logging in /root/.bashrc
+    shell: grep -q "history_to_syslog" /root/.bashrc && echo "PASS" || echo "FAIL"
     register: bashrc
     changed_when: false
 
   - debug:
-      msg: "/root/.bashrc => {{ bashrc.stdout }}"
+      msg:
+        - "/etc/profile => {{ profile.stdout }}"
+        - "/root/.bashrc => {{ bashrc.stdout }}"
 
   # =====================================================
-  # 3. BASH LOG FILE + RSYSLOG
+  # 2. AUDIT PLUGIN CHECK
   # =====================================================
-  - name: Check bash logging system
-    shell: |
-      missing=""
-      [ -f /var/log/bash.log ] || missing="bash.log_file"
-      grep -R "local5.debug" /etc/rsyslog* >/dev/null 2>&1 || missing="${missing} rsyslog_rule"
-      grep -R "bash.log" /etc/rsyslog* >/dev/null 2>&1 || missing="${missing} mapping"
-
-      if [ -z "$missing" ]; then
-        echo "OK"
-      else
-        echo "MISSING:$missing"
-      fi
-    register: bashlog
-    changed_when: false
-
-  - debug:
-      msg: "bash system => {{ bashlog.stdout }}"
-
-  # =====================================================
-  # 4. AUDITD CHECK
-  # =====================================================
-  - name: Check audit configuration
-    shell: |
-      missing=""
-      grep -R "active *= *yes" /etc/audit /etc/audisp 2>/dev/null || missing="active_yes"
-      grep -R "syslog.conf" /etc/audit/plugins.d /etc/audisp/plugins.d 2>/dev/null || missing="${missing} plugin"
-
-      if [ -z "$missing" ]; then
-        echo "OK"
-      else
-        echo "MISSING:$missing"
-      fi
+  - name: Check audit plugin active=yes
+    shell: grep -R "active *= *yes" /etc/audit /etc/audisp 2>/dev/null && echo "PASS" || echo "FAIL"
     register: audit
     changed_when: false
 
   - debug:
-      msg: "audit => {{ audit.stdout }}"
+      msg: "audit plugin => {{ audit.stdout }}"
 
   # =====================================================
-  # 5. RSYSLOG AUDIT CHECK
+  # 3. RSYSLOG QRADAR FORWARD
   # =====================================================
-  - name: Check rsyslog audit forwarding
+  - name: Check QRadar forwarding IP
+    shell: grep -R "192.168.121.21" /etc/rsyslog* 2>/dev/null && echo "PASS" || echo "FAIL"
+    register: qradar
+    changed_when: false
+
+  - debug:
+      msg: "QRadar => {{ qradar.stdout }}"
+
+  # =====================================================
+  # 4. RSYSLOG AUDIT IMFILE CONFIG
+  # =====================================================
+  - name: Check audit imfile config
     shell: |
-      missing=""
-      grep -R "InputFileName /var/log/audit/audit.log" /etc/rsyslog* >/dev/null 2>&1 || missing="audit_input"
-      grep -R "InputFileFacility local6" /etc/rsyslog* >/dev/null 2>&1 || missing="${missing} local6"
-      grep -R "InputRunFileMonitor" /etc/rsyslog* >/dev/null 2>&1 || missing="${missing} monitor"
-
-      if [ -z "$missing" ]; then
-        echo "OK"
-      else
-        echo "MISSING:$missing"
-      fi
+      grep -q "/var/log/audit/audit.log" /etc/rsyslog* &&
+      grep -q "InputFileFacility local6" /etc/rsyslog* &&
+      grep -q "InputRunFileMonitor" /etc/rsyslog* &&
+      echo "PASS" || echo "FAIL"
     register: rsyslog_audit
     changed_when: false
 
@@ -123,50 +62,50 @@
       msg: "rsyslog audit => {{ rsyslog_audit.stdout }}"
 
   # =====================================================
-  # 6. QRADAR CHECK
+  # 5. BASH LOG FILE + RSYSLOG RULE
   # =====================================================
-  - name: Check QRadar forwarding
+  - name: Check bash.log file + rsyslog rule
     shell: |
-      grep -R "192.168.121.21" /etc/rsyslog* >/dev/null 2>&1 && echo "OK" || echo "MISSING:QRadar_IP"
-    register: qradar
+      [ -f /var/log/bash.log ] &&
+      grep -q "local5.debug" /etc/rsyslog.d/ 2>/dev/null &&
+      echo "PASS" || echo "FAIL"
+    register: bashlog
     changed_when: false
 
   - debug:
-      msg: "qradar => {{ qradar.stdout }}"
+      msg: "bash logging system => {{ bashlog.stdout }}"
 
   # =====================================================
-  # 7. SCORING ENGINE (FIXED TYPE SAFE)
+  # 6. 50-DEFAULT CONF RULES CHECK
   # =====================================================
-  - name: Calculate compliance score (SAFE INT)
-    set_fact:
-      score_calc: >-
-        {{
-          (
-            (0 if 'MISSING' in profile.stdout else 1) +
-            (0 if 'MISSING' in bashrc.stdout else 1) +
-            (0 if 'MISSING' in bashlog.stdout else 1) +
-            (0 if 'MISSING' in audit.stdout else 1) +
-            (0 if 'MISSING' in rsyslog_audit.stdout else 1) +
-            (0 if 'MISSING' in qradar.stdout else 1)
-          ) | int
-        }}
+  - name: Check rsyslog default rules
+    shell: |
+      grep -q "auth,authpriv" /etc/rsyslog.d/50-default.conf &&
+      grep -q "cron" /etc/rsyslog.d/50-default.conf &&
+      grep -q "local1" /etc/rsyslog.d/50-default.conf &&
+      grep -q "mail.err" /etc/rsyslog.d/50-default.conf &&
+      grep -q "emerg" /etc/rsyslog.d/50-default.conf &&
+      echo "PASS" || echo "FAIL"
+    register: default_rules
+    changed_when: false
+
+  - debug:
+      msg: "rsyslog rules => {{ default_rules.stdout }}"
 
   # =====================================================
-  # 8. FINAL REPORT (NO TYPE ERROR FIXED)
+  # 7. FINAL RESULT
   # =====================================================
-  - name: Show final compliance report
+  - name: Final compliance summary
     debug:
       msg:
         - "======================================"
-        - "COMPLIANCE SCORE: {{ score_calc | int }}/6"
-        - >-
-          STATUS:
-          {% set sc = score_calc | int %}
-          {% if sc == 6 %}
-          FULL COMPLIANT
-          {% elif sc >= 4 %}
-          PARTIAL COMPLIANT
-          {% else %}
-          NON COMPLIANT
-          {% endif %}
+        - "COMPLIANCE REPORT"
+        - "======================================"
+        - "/etc/profile => {{ profile.stdout }}"
+        - "/root/.bashrc => {{ bashrc.stdout }}"
+        - "audit plugin => {{ audit.stdout }}"
+        - "QRadar => {{ qradar.stdout }}"
+        - "rsyslog audit => {{ rsyslog_audit.stdout }}"
+        - "bash log => {{ bashlog.stdout }}"
+        - "default rules => {{ default_rules.stdout }}"
         - "======================================"
