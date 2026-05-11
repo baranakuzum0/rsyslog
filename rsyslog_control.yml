@@ -1,146 +1,141 @@
 ---
-- name: SLES Security Config Verification (NO CHANGE - READ ONLY)
+- name: Real Compliance Engine (Deep Check + Score)
   hosts: all
   become: yes
+  gather_facts: no
+
+  vars:
+    score: 0
+    max_score: 8
 
   tasks:
 
   # =====================================================
-  # 1. SERVICE STATUS CHECK
+  # HEADER
   # =====================================================
-  - name: Check rsyslog service
-    shell: systemctl is-active rsyslog
-    register: rsyslog_service
-    changed_when: false
-    failed_when: false
-
-  - debug:
-      msg: "rsyslog service => {{ rsyslog_service.stdout }}"
-
-  - name: Check auditd service
-    shell: systemctl is-active auditd
-    register: auditd_service
-    changed_when: false
-    failed_when: false
-
-  - debug:
-      msg: "auditd service => {{ auditd_service.stdout }}"
-
-  # =====================================================
-  # 2. BASH LOGGING CHECK (/etc/profile)
-  # =====================================================
-  - name: Check /etc/profile bash logging block
-    shell: |
-      grep -q "history_to_syslog" /etc/profile &&
-      grep -q "logger -p local5.debug" /etc/profile &&
-      grep -q "trap history_to_syslog DEBUG" /etc/profile &&
-      echo "OK" || echo "MISSING"
-    register: profile_check
-    changed_when: false
-
-  - debug:
-      msg: "/etc/profile => {{ profile_check.stdout }}"
-
-  # =====================================================
-  # 3. BASH LOGGING CHECK (/root/.bashrc)
-  # =====================================================
-  - name: Check /root/.bashrc bash logging
-    shell: |
-      grep -q "history_to_syslog" /root/.bashrc &&
-      grep -q "logger -p local5.debug" /root/.bashrc &&
-      echo "OK" || echo "MISSING"
-    register: bashrc_check
-    changed_when: false
-
-  - debug:
-      msg: "/root/.bashrc => {{ bashrc_check.stdout }}"
-
-  # =====================================================
-  # 4. AUDIT PLUGIN CHECK
-  # =====================================================
-  - name: Check audit plugin syslog (new path)
-    stat:
-      path: /etc/audit/plugins.d/syslog.conf
-    register: audit_new
-
-  - name: Check audit plugin syslog (old path)
-    stat:
-      path: /etc/audisp/plugins.d/syslog.conf
-    register: audit_old
-
-  - debug:
+  - name: Start report
+    debug:
       msg:
-        - "audit new plugin => {{ audit_new.stat.exists }}"
-        - "audit old plugin => {{ audit_old.stat.exists }}"
+        - "======================================"
+        - "   REAL COMPLIANCE ENGINE REPORT      "
+        - "======================================"
+        - "Host: {{ inventory_hostname }}"
 
-  - name: Check active=yes in audit plugin
-    shell: grep -R "active *= *yes" /etc/audit /etc/audisp 2>/dev/null || echo "NOT FOUND"
-    register: audit_active
+  # =====================================================
+  # 1. /etc/profile CHECK (DEEP)
+  # =====================================================
+  - name: Check /etc/profile required lines
+    shell: |
+      missing=0
+
+      grep -q "history_to_syslog" /etc/profile || echo "MISSING: history_to_syslog"
+      grep -q "trap history_to_syslog DEBUG" /etc/profile || echo "MISSING: trap DEBUG"
+      grep -q "logger -p local5.debug" /etc/profile || echo "MISSING: logger local5"
+
+      grep -q "history_to_syslog" /etc/profile && grep -q "trap history_to_syslog DEBUG" /etc/profile && grep -q "logger -p local5.debug" /etc/profile
+      if [ $? -eq 0 ]; then echo "STATUS: FULL"; else echo "STATUS: FAIL"; fi
+    register: profile
     changed_when: false
 
   - debug:
-      msg: "audit active => {{ audit_active.stdout }}"
+      msg: "{{ profile.stdout_lines }}"
 
   # =====================================================
-  # 5. RSYSLOG AUDIT IMFILE CHECK
+  # 2. /root/.bashrc CHECK
   # =====================================================
-  - name: Check rsyslog audit imfile config
+  - name: Check /root/.bashrc deep config
     shell: |
-      grep -q "/var/log/audit/audit.log" /etc/rsyslog.conf /etc/rsyslog.d/* &&
-      grep -q "InputFileName" /etc/rsyslog.conf /etc/rsyslog.d/* &&
-      grep -q "local6" /etc/rsyslog.conf /etc/rsyslog.d/* &&
-      echo "OK" || echo "MISSING"
+      grep -q "history_to_syslog" /root/.bashrc || echo "MISSING: function"
+      grep -q "old_command" /root/.bashrc || echo "MISSING: old_command"
+      grep -q "logger -p local5.debug" /root/.bashrc || echo "MISSING: logger"
+    register: bashrc
+    changed_when: false
+
+  - debug:
+      msg: "{{ bashrc.stdout_lines }}"
+
+  # =====================================================
+  # 3. BASH LOG FILE CHECK
+  # =====================================================
+  - name: Check bash log system completeness
+    shell: |
+      [ -f /var/log/bash.log ] || echo "MISSING: bash.log file"
+      grep -R "local5.debug" /etc/rsyslog* >/dev/null 2>&1 || echo "MISSING: rsyslog rule"
+      grep -R "bash.log" /etc/rsyslog* >/dev/null 2>&1 || echo "MISSING: rsyslog mapping"
+    register: bashlog
+    changed_when: false
+
+  - debug:
+      msg: "{{ bashlog.stdout_lines }}"
+
+  # =====================================================
+  # 4. AUDITD CHECK
+  # =====================================================
+  - name: Audit plugin deep check
+    shell: |
+      grep -R "active *= *yes" /etc/audit /etc/audisp 2>/dev/null || echo "MISSING: active=yes"
+      grep -R "syslog.conf" /etc/audit/plugins.d /etc/audisp/plugins.d 2>/dev/null || echo "MISSING: syslog plugin"
+    register: audit
+    changed_when: false
+
+  - debug:
+      msg: "{{ audit.stdout_lines }}"
+
+  # =====================================================
+  # 5. RSYSLOG AUDIT CHECK
+  # =====================================================
+  - name: Rsyslog audit deep validation
+    shell: |
+      grep -R "InputFileName /var/log/audit/audit.log" /etc/rsyslog* >/dev/null 2>&1 || echo "MISSING: audit file input"
+      grep -R "InputFileFacility local6" /etc/rsyslog* >/dev/null 2>&1 || echo "MISSING: local6 facility"
+      grep -R "InputRunFileMonitor" /etc/rsyslog* >/dev/null 2>&1 || echo "MISSING: monitor"
     register: rsyslog_audit
     changed_when: false
 
   - debug:
-      msg: "rsyslog audit config => {{ rsyslog_audit.stdout }}"
+      msg: "{{ rsyslog_audit.stdout_lines }}"
 
   # =====================================================
-  # 6. QRADAR IP CHECK
+  # 6. QRADAR CHECK
   # =====================================================
-  - name: Check QRadar destination IP
-    shell: grep -R "192.168.121.21" /etc/rsyslog* 2>/dev/null || echo "MISSING"
+  - name: QRadar forwarding check
+    shell: |
+      grep -R "192.168.121.21" /etc/rsyslog* >/dev/null 2>&1 || echo "MISSING: QRadar IP"
     register: qradar
     changed_when: false
 
   - debug:
-      msg: "QRadar config => {{ qradar.stdout }}"
+      msg: "{{ qradar.stdout_lines }}"
 
   # =====================================================
-  # 7. BASH LOG FILE CHECK
+  # 7. SCORING ENGINE
   # =====================================================
-  - name: Check bash log file
-    stat:
-      path: /var/log/bash.log
-    register: bash_log
+  - name: Calculate compliance score
+    set_fact:
+      score_calc: >-
+        {{
+          (
+            (0 if 'MISSING' in profile.stdout else 1) +
+            (0 if 'MISSING' in bashrc.stdout else 1) +
+            (0 if 'MISSING' in bashlog.stdout else 1) +
+            (0 if 'MISSING' in audit.stdout else 1) +
+            (0 if 'MISSING' in rsyslog_audit.stdout else 1) +
+            (0 if 'MISSING' in qradar.stdout else 1)
+          )
+        }}
 
-  - debug:
-      msg: "bash.log => {{ bash_log.stat.exists }}"
-
-  # =====================================================
-  # 8. RSYSLOG BASH RULE CHECK
-  # =====================================================
-  - name: Check bash rsyslog config
-    shell: grep -q "local5.debug" /etc/rsyslog.d/* && echo "OK" || echo "MISSING"
-    register: bash_rsyslog
-    changed_when: false
-
-  - debug:
-      msg: "bash rsyslog => {{ bash_rsyslog.stdout }}"
-
-  # =====================================================
-  # 9. DEFAULT RSYSLOG RULES CHECK
-  # =====================================================
-  - name: Check rsyslog default rules
-    shell: |
-      grep -q "auth,authpriv" /etc/rsyslog.d/50-default.conf &&
-      grep -q "cron" /etc/rsyslog.d/50-default.conf &&
-      grep -q "local1" /etc/rsyslog.d/50-default.conf &&
-      grep -q "syslog" /etc/rsyslog.d/50-default.conf &&
-      echo "OK" || echo "MISSING"
-    register: rsyslog_default
-    changed_when: false
-
-  - debug:
-      msg: "rsyslog default rules => {{ rsyslog_default.stdout }}"
+  - name: Show compliance score
+    debug:
+      msg:
+        - "======================================"
+        - "COMPLIANCE SCORE: {{ score_calc }}/6"
+        - >-
+          STATUS:
+          {% if score_calc == 6 %}
+          FULL COMPLIANT
+          {% elif score_calc >= 4 %}
+          PARTIAL COMPLIANT
+          {% else %}
+          NON COMPLIANT
+          {% endif %}
+        - "======================================"
