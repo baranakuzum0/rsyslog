@@ -1,5 +1,5 @@
 ---
-- name: Linux Security Compliance Report (CLEAN OUTPUT)
+- name: Linux Security Compliance Report (STRICT LINE CHECK)
   hosts: all
   become: yes
   gather_facts: no
@@ -13,115 +13,120 @@
     debug:
       msg:
         - "=================================================="
-        - "        LINUX SECURITY COMPLIANCE REPORT"
+        - "      LINUX SECURITY COMPLIANCE REPORT"
         - "=================================================="
-        - "HOST: {{ inventory_hostname }}"
+        - "HOST : {{ inventory_hostname }}"
         - "=================================================="
 
   # =====================================================
-  # BASH LOGGING CHECK
+  # /etc/profile CHECK
   # =====================================================
-  - name: Check /etc/profile bash logging
-    shell: grep -q "history_to_syslog" /etc/profile && echo "YES" || echo "NO"
-    register: p1
-    changed_when: false
-
-  - name: Check /root/.bashrc bash logging
-    shell: grep -q "history_to_syslog" /root/.bashrc && echo "YES" || echo "NO"
-    register: p2
-    changed_when: false
-
-  - debug:
-      msg:
-        - "[BASH LOGGING]"
-        - "/etc/profile  : {{ p1.stdout }}"
-        - "/root/.bashrc : {{ p2.stdout }}"
-
-  # =====================================================
-  # AUDIT PLUGIN
-  # =====================================================
-  - name: Check audit plugin
-    shell: grep -R "active *= *yes" /etc/audit /etc/audisp 2>/dev/null && echo "YES" || echo "NO"
-    register: audit
-    changed_when: false
-
-  - debug:
-      msg:
-        - "[AUDIT]"
-        - "plugin : {{ audit.stdout }}"
-
-  # =====================================================
-  # QRADAR
-  # =====================================================
-  - name: Check QRadar forwarding
-    shell: grep -R "192.168.121.21" /etc/rsyslog* 2>/dev/null && echo "YES" || echo "NO"
-    register: qradar
-    changed_when: false
-
-  - debug:
-      msg:
-        - "[QRADAR]"
-        - "forward : {{ qradar.stdout }}"
-
-  # =====================================================
-  # AUDIT IMFILE
-  # =====================================================
-  - name: Check audit rsyslog pipeline
-    shell: grep -q "/var/log/audit/audit.log" /etc/rsyslog* && echo "YES" || echo "NO"
-    register: audit_pipe
-    changed_when: false
-
-  - debug:
-      msg:
-        - "[AUDIT PIPE]"
-        - "imfile : {{ audit_pipe.stdout }}"
-
-  # =====================================================
-  # BASH LOG FILE SYSTEM
-  # =====================================================
-  - name: Check bash log system
-    shell: test -f /var/log/bash.log && grep -q "local5.debug" /etc/rsyslog.d/ && echo "YES" || echo "NO"
-    register: bashlog
-    changed_when: false
-
-  - debug:
-      msg:
-        - "[BASH LOG FILE]"
-        - "system : {{ bashlog.stdout }}"
-
-  # =====================================================
-  # RSYSLOG DEFAULT RULES
-  # =====================================================
-  - name: Check rsyslog default rules
+  - name: Validate /etc/profile bash logging
     shell: |
-      grep -q "auth,authpriv" /etc/rsyslog.d/50-default.conf &&
-      grep -q "cron" /etc/rsyslog.d/50-default.conf &&
-      grep -q "local1" /etc/rsyslog.d/50-default.conf &&
-      grep -q "mail.err" /etc/rsyslog.d/50-default.conf &&
-      grep -q "emerg" /etc/rsyslog.d/50-default.conf &&
-      echo "YES" || echo "NO"
-    register: rules
+      grep -Fq 'PORT=`who am i | awk' /etc/profile &&
+      grep -Fq 'logger -p local5.debug' /etc/profile &&
+      grep -Fq 'function history_to_syslog' /etc/profile &&
+      grep -Fq 'cmd=$(history 1)' /etc/profile &&
+      grep -Fq 'old_command=$cmd' /etc/profile &&
+      grep -Fq 'trap history_to_syslog DEBUG || EXIT' /etc/profile &&
+      echo "PASS" || echo "FAIL"
+    register: profile_check
     changed_when: false
 
-  - debug:
-      msg:
-        - "[RSYSLOG RULES]"
-        - "default : {{ rules.stdout }}"
+  # =====================================================
+  # /root/.bashrc CHECK
+  # =====================================================
+  - name: Validate /root/.bashrc bash logging
+    shell: |
+      grep -Fq 'PORT=`who am i | awk' /root/.bashrc &&
+      grep -Fq 'logger -p local5.debug' /root/.bashrc &&
+      grep -Fq 'function history_to_syslog' /root/.bashrc &&
+      grep -Fq 'cmd=$(history 1)' /root/.bashrc &&
+      grep -Fq 'old_command=$cmd' /root/.bashrc &&
+      grep -Fq 'trap history_to_syslog DEBUG || EXIT' /root/.bashrc &&
+      echo "PASS" || echo "FAIL"
+    register: bashrc_check
+    changed_when: false
+
+  # =====================================================
+  # AUDIT PLUGIN CHECK
+  # =====================================================
+  - name: Validate audit plugin config
+    shell: |
+      (
+        grep -Fq 'active = yes' /etc/audisp/plugins.d/syslog.conf ||
+        grep -Fq 'active = yes' /etc/audit/plugins.d/syslog.conf
+      ) && echo "PASS" || echo "FAIL"
+    register: audit_check
+    changed_when: false
+
+  # =====================================================
+  # RSYSLOG QRADAR CHECK
+  # =====================================================
+  - name: Validate rsyslog QRadar forwarding
+    shell: |
+      grep -Fq '192.168.121.21' /etc/rsyslog.conf &&
+      grep -Fq '$ModLoad imfile' /etc/rsyslog.conf &&
+      grep -Fq '$InputFileName /var/log/audit/audit.log' /etc/rsyslog.conf &&
+      grep -Fq '$InputFileTag tag_audit_log_.$hostname:' /etc/rsyslog.conf &&
+      grep -Fq '$InputFileStateFile audit_log' /etc/rsyslog.conf &&
+      grep -Fq '$InputFileSeverity info' /etc/rsyslog.conf &&
+      grep -Fq '$InputFileFacility local6' /etc/rsyslog.conf &&
+      grep -Fq '$InputRunFileMonitor' /etc/rsyslog.conf &&
+      echo "PASS" || echo "FAIL"
+    register: rsyslog_check
+    changed_when: false
+
+  # =====================================================
+  # BASH LOG FILE CHECK
+  # =====================================================
+  - name: Validate bash log file
+    shell: |
+      test -f /var/log/bash.log &&
+      stat -c %a /var/log/bash.log | grep -Fxq '640' &&
+      echo "PASS" || echo "FAIL"
+    register: bashlog_check
+    changed_when: false
+
+  # =====================================================
+  # BASH RSYSLOG RULE CHECK
+  # =====================================================
+  - name: Validate bash rsyslog rule
+    shell: |
+      grep -Fq 'local5.debug           /var/log/bash.log' /etc/rsyslog.d/bash.conf &&
+      echo "PASS" || echo "FAIL"
+    register: bashrule_check
+    changed_when: false
+
+  # =====================================================
+  # 50-DEFAULT RULES CHECK
+  # =====================================================
+  - name: Validate rsyslog default rules
+    shell: |
+      grep -Fq 'auth,authpriv.*                 /var/log/auth.log' /etc/rsyslog.d/50-default.conf &&
+      grep -Fq '*.*;auth,authpriv.none          -/var/log/syslog' /etc/rsyslog.d/50-default.conf &&
+      grep -Fq 'cron.*                          /var/log/cron.log' /etc/rsyslog.d/50-default.conf &&
+      grep -Fq 'local1.*                        /var/log/sudo.log' /etc/rsyslog.d/50-default.conf &&
+      grep -Fq 'mail.err                        /var/log/mail.err' /etc/rsyslog.d/50-default.conf &&
+      grep -Fq '*.emerg                         :omusrmsg:*' /etc/rsyslog.d/50-default.conf &&
+      echo "PASS" || echo "FAIL"
+    register: default_rules_check
+    changed_when: false
 
   # =====================================================
   # FINAL REPORT
   # =====================================================
-  - name: Final report
+  - name: Final compliance report
     debug:
       msg:
         - "=================================================="
-        - "FINAL COMPLIANCE REPORT"
+        - "FINAL SECURITY COMPLIANCE REPORT"
         - "=================================================="
-        - "BASH PROFILE   : {{ p1.stdout }}"
-        - "BASH RC        : {{ p2.stdout }}"
-        - "AUDIT PLUGIN   : {{ audit.stdout }}"
-        - "QRADAR         : {{ qradar.stdout }}"
-        - "AUDIT PIPE     : {{ audit_pipe.stdout }}"
-        - "BASH LOG       : {{ bashlog.stdout }}"
-        - "RSYSLOG RULES   : {{ rules.stdout }}"
+        - "/etc/profile          : {{ profile_check.stdout }}"
+        - "/root/.bashrc         : {{ bashrc_check.stdout }}"
+        - "audit plugin          : {{ audit_check.stdout }}"
+        - "rsyslog qradar        : {{ rsyslog_check.stdout }}"
+        - "/var/log/bash.log     : {{ bashlog_check.stdout }}"
+        - "bash.conf             : {{ bashrule_check.stdout }}"
+        - "50-default.conf       : {{ default_rules_check.stdout }}"
         - "=================================================="
