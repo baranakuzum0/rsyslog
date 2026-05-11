@@ -1,91 +1,98 @@
 ---
-- name: Bash + Audit + Rsyslog Existence Check
+- name: Linux Security Compliance Report (Readable)
   hosts: all
   become: yes
 
   tasks:
 
   # -------------------------
-  # /etc/profile kontrol
+  # HEADER
   # -------------------------
-  - name: Check /etc/profile bash logging exists
-    shell: grep -q "logger" /etc/profile && echo "EXISTS" || echo "MISSING"
-    register: profile_result
-    changed_when: false
+  - name: Start report header
+    debug:
+      msg:
+        - "======================================"
+        - "     SECURITY COMPLIANCE REPORT       "
+        - "======================================"
+
+  # -------------------------
+  # /etc/profile
+  # -------------------------
+  - name: Check /etc/profile
+    shell: grep -q "logger" /etc/profile && echo "PASS" || echo "FAIL"
+    register: profile
 
   - debug:
-      msg: "/etc/profile => {{ profile_result.stdout }}"
+      msg: "/etc/profile (bash logging) => {{ profile.stdout }}"
 
   # -------------------------
-  # /root/.bashrc kontrol
+  # /root/.bashrc
   # -------------------------
-  - name: Check /root/.bashrc logging exists
-    shell: grep -q "history_to_syslog\|logger\|trap" /root/.bashrc && echo "EXISTS" || echo "MISSING"
-    register: bashrc_result
-    changed_when: false
+  - name: Check /root/.bashrc
+    shell: grep -q "history_to_syslog\|trap\|logger" /root/.bashrc && echo "PASS" || echo "FAIL"
+    register: bashrc
 
   - debug:
-      msg: "/root/.bashrc => {{ bashrc_result.stdout }}"
+      msg: "/root/.bashrc (bash logging) => {{ bashrc.stdout }}"
 
   # -------------------------
-  # audit plugin kontrol
+  # audit plugin
   # -------------------------
-  - name: Check audit syslog plugin (new path)
+  - name: Check audit syslog plugin
     stat:
       path: /etc/audit/plugins.d/syslog.conf
     register: audit_new
 
   - debug:
-      msg: "/etc/audit/plugins.d/syslog.conf => {{ audit_new.stat.exists }}"
+      msg: "Audit plugin (/etc/audit) => {{ 'PASS' if audit_new.stat.exists else 'FAIL' }}"
 
-  - name: Check audit syslog plugin (old path)
+  - name: Check old audit plugin path
     stat:
       path: /etc/audisp/plugins.d/syslog.conf
     register: audit_old
 
   - debug:
-      msg: "/etc/audisp/plugins.d/syslog.conf => {{ audit_old.stat.exists }}"
+      msg: "Audit plugin (/etc/audisp) => {{ 'PASS' if audit_old.stat.exists else 'FAIL' }}"
 
   # -------------------------
-  # audit active kontrol
+  # audit active
   # -------------------------
-  - name: Check audit plugin active=yes
-    shell: grep -R "active *= *yes" /etc/audit /etc/audisp 2>/dev/null || echo "NOT FOUND"
+  - name: Check audit active
+    shell: grep -R "active *= *yes" /etc/audit /etc/audisp 2>/dev/null | wc -l
     register: audit_active
     changed_when: false
 
   - debug:
-      msg: "audit active => {{ audit_active.stdout }}"
+      msg: "Audit ACTIVE config => {{ 'PASS' if audit_active.stdout|int > 0 else 'FAIL' }}"
 
   # -------------------------
-  # rsyslog audit log kontrol
+  # rsyslog audit forwarding
   # -------------------------
   - name: Check rsyslog audit forwarding
-    shell: grep -R "/var/log/audit/audit.log" /etc/rsyslog* 2>/dev/null || echo "NOT FOUND"
+    shell: grep -R "/var/log/audit/audit.log" /etc/rsyslog* 2>/dev/null | wc -l
     register: rsyslog_audit
     changed_when: false
 
   - debug:
-      msg: "rsyslog audit => {{ rsyslog_audit.stdout }}"
+      msg: "RSYSLOG audit forward => {{ 'PASS' if rsyslog_audit.stdout|int > 0 else 'FAIL' }}"
 
   # -------------------------
-  # bash.log kontrol
+  # bash.log file
   # -------------------------
-  - name: Check /var/log/bash.log exists
+  - name: Check bash.log
     stat:
       path: /var/log/bash.log
     register: bashlog
 
   - debug:
-      msg: "/var/log/bash.log => {{ bashlog.stat.exists }}"
+      msg: "bash.log file => {{ 'PASS' if bashlog.stat.exists else 'FAIL' }}"
 
   # -------------------------
-  # rsyslog rules kontrol
+  # FOOTER
   # -------------------------
-  - name: Check rsyslog rules existence
-    shell: grep -E "auth,authpriv|cron|local1|mail|syslog" /etc/rsyslog* 2>/dev/null || echo "NOT FOUND"
-    register: rsyslog_rules
-    changed_when: false
-
-  - debug:
-      msg: "rsyslog rules => {{ rsyslog_rules.stdout }}"
+  - name: End report
+    debug:
+      msg:
+        - "======================================"
+        - "           REPORT END                 "
+        - "======================================"
