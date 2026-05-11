@@ -3,7 +3,6 @@
   hosts: all
   gather_facts: yes
   vars:
-    # Tam metinler - harfine kadar kontrol edilecek
     bash_log_kodu: |
       PORT=`who am i | awk '{ print $5 }' | sed 's/(//g' | sed 's/)//g'`
       logger -p local5.debug -t "Bash $LOGNAME $$" User $LOGNAME logged from $PORT
@@ -32,7 +31,6 @@
       $InputFileFacility local6
       $InputRunFileMonitor
 
-    # Sayi ile baslamayan degisken adi
     default_50_kurallar:
       - "auth,authpriv.*                 /var/log/auth.log"
       - "*.*;auth,authpriv.none          -/var/log/syslog"
@@ -42,8 +40,7 @@
       - "*.emerg                         :omusrmsg:*"
 
   tasks:
-    # TASK 1: /etc/profile kontrolu
-    - name: "KONTROL-1: /etc/profile icinde bash log kodu tam metin kontrolu"
+    - name: "KONTROL-1: /etc/profile bash log kodu"
       ansible.builtin.lineinfile:
         path: /etc/profile
         line: "{{ bash_log_kodu }}"
@@ -52,12 +49,11 @@
       register: profile_kontrol
       failed_when: false
 
-    - name: "RAPOR-1: /etc/profile durumu"
+    - name: "RAPOR-1: /etc/profile"
       ansible.builtin.debug:
-        msg: "=== /etc/profile: {% if not profile_kontrol.changed %}DOGRU - Tam metin eslesiyor{% else %}HATALI veya EKSIK{% endif %} ==="
+        msg: "=== /etc/profile: {% if not profile_kontrol.changed %}DOGRU{% else %}HATALI{% endif %} ==="
 
-    # TASK 2: /root/.bashrc kontrolu
-    - name: "KONTROL-2: /root/.bashrc icinde bash log kodu tam metin kontrolu"
+    - name: "KONTROL-2: /root/.bashrc bash log kodu"
       ansible.builtin.lineinfile:
         path: /root/.bashrc
         line: "{{ bash_log_kodu }}"
@@ -66,12 +62,11 @@
       register: bashrc_kontrol
       failed_when: false
 
-    - name: "RAPOR-2: /root/.bashrc durumu"
+    - name: "RAPOR-2: /root/.bashrc"
       ansible.builtin.debug:
-        msg: "=== /root/.bashrc: {% if not bashrc_kontrol.changed %}DOGRU - Tam metin eslesiyor{% else %}HATALI veya EKSIK{% endif %} ==="
+        msg: "=== /root/.bashrc: {% if not bashrc_kontrol.changed %}DOGRU{% else %}HATALI{% endif %} ==="
 
-    # TASK 3: Audit plugin dosyasini bul
-    - name: "KONTROL-3: Audit plugin dosyasinin varligi"
+    - name: "KONTROL-3: Audit plugin dosyasi"
       ansible.builtin.stat:
         path: "{{ item }}"
       loop:
@@ -79,17 +74,12 @@
         - /etc/audit/plugins.d/syslog.conf
       register: audit_plugin_stat
 
-    - name: "RAPOR-3: Audit plugin dosyasi"
-      ansible.builtin.debug:
-        msg: "=== Audit Plugin Dosyasi: {% for item in audit_plugin_stat.results if item.stat.exists %}{{ item.stat.path }}{% else %}BULUNAMADI{% endfor %} ==="
-
-    # TASK 4: Audit plugin "active = yes" kontrolu
-    - name: "Set audit plugin dosyasi degiskeni"
+    - name: "Set audit plugin dosyasi"
       ansible.builtin.set_fact:
         audit_plugin_dosyasi: "{{ (audit_plugin_stat.results | selectattr('stat.exists', 'equalto', true) | first).stat.path | default('') }}"
       when: audit_plugin_stat.results | selectattr('stat.exists', 'equalto', true) | list | length > 0
 
-    - name: "KONTROL-4: Audit plugin icinde 'active = yes' harfine kadar kontrol"
+    - name: "KONTROL-4: active = yes kontrolu"
       ansible.builtin.lineinfile:
         path: "{{ audit_plugin_dosyasi }}"
         line: "active = yes"
@@ -98,13 +88,12 @@
       register: audit_plugin_kontrol
       when: audit_plugin_dosyasi | length > 0
 
-    - name: "RAPOR-4: Audit plugin 'active = yes' durumu"
+    - name: "RAPOR-4: Audit plugin"
       ansible.builtin.debug:
         msg: "=== Audit plugin active=yes: {% if audit_plugin_kontrol is defined and not audit_plugin_kontrol.changed %}DOGRU{% elif audit_plugin_kontrol is defined %}HATALI{% else %}DOSYA YOK{% endif %} ==="
       when: audit_plugin_kontrol is defined
 
-    # TASK 5: QRadar IP kontrolu
-    - name: "KONTROL-5: rsyslog.conf icinde QRadar IP (192.168.121.21) tam metin kontrolu"
+    - name: "KONTROL-5: QRadar IP"
       ansible.builtin.lineinfile:
         path: /etc/rsyslog.conf
         line: "192.168.121.21"
@@ -113,12 +102,11 @@
       register: qradar_ip_kontrol
       failed_when: false
 
-    - name: "RAPOR-5: QRadar IP durumu"
+    - name: "RAPOR-5: QRadar IP"
       ansible.builtin.debug:
-        msg: "=== QRadar IP (192.168.121.21): {% if not qradar_ip_kontrol.changed %}DOGRU{% else %}HATALI veya EKSIK{% endif %} ==="
+        msg: "=== QRadar IP (192.168.121.21): {% if not qradar_ip_kontrol.changed %}DOGRU{% else %}HATALI{% endif %} ==="
 
-    # TASK 6: Audit log blogu kontrolu
-    - name: "KONTROL-6: rsyslog.conf icinde audit log blogu tam metin kontrolu"
+    - name: "KONTROL-6: Audit log blogu"
       ansible.builtin.blockinfile:
         path: /etc/rsyslog.conf
         block: "{{ audit_log_bloku }}"
@@ -128,17 +116,16 @@
       register: audit_log_blogu_kontrol
       failed_when: false
 
-    - name: "RAPOR-6: Audit log blogu durumu"
+    - name: "RAPOR-6: Audit log blogu"
       ansible.builtin.debug:
-        msg: "=== Audit log blogu: {% if not audit_log_blogu_kontrol.changed %}DOGRU{% else %}HATALI veya EKSIK{% endif %} ==="
+        msg: "=== Audit log blogu: {% if not audit_log_blogu_kontrol.changed %}DOGRU{% else %}HATALI{% endif %} ==="
 
-    # TASK 7: bash.conf kontrolu
-    - name: "KONTROL-7: bash.conf dosyasinin varligi"
+    - name: "KONTROL-7: bash.conf dosyasi"
       ansible.builtin.stat:
         path: /etc/rsyslog.d/bash.conf
       register: bash_conf_stat
 
-    - name: "KONTROL-7B: bash.conf icerigi tam metin kontrolu"
+    - name: "KONTROL-7B: bash.conf icerik"
       ansible.builtin.lineinfile:
         path: /etc/rsyslog.d/bash.conf
         line: "local5.debug           /var/log/bash.log"
@@ -148,22 +135,20 @@
       when: bash_conf_stat.stat.exists
       failed_when: false
 
-    - name: "RAPOR-7: bash.conf durumu"
+    - name: "RAPOR-7: bash.conf"
       ansible.builtin.debug:
-        msg: "=== bash.conf: Dosya={% if bash_conf_stat.stat.exists %}VAR{% else %}YOK{% endif %} | Icerik={% if bash_conf_icerik_kontrol is defined and not bash_conf_icerik_kontrol.changed %}DOGRU{% elif bash_conf_icerik_kontrol is defined %}HATALI{% else %}YOK{% endif %} ==="
+        msg: "=== bash.conf: Dosya={% if bash_conf_stat.stat.exists %}VAR{% else %}YOK{% endif %} Icerik={% if bash_conf_icerik_kontrol is defined and not bash_conf_icerik_kontrol.changed %}DOGRU{% elif bash_conf_icerik_kontrol is defined %}HATALI{% else %}YOK{% endif %} ==="
 
-    # TASK 8: bash.log izin kontrolu
-    - name: "KONTROL-8: bash.log dosya izinleri (640 olmali)"
+    - name: "KONTROL-8: bash.log izin"
       ansible.builtin.stat:
         path: /var/log/bash.log
       register: bash_log_stat
 
-    - name: "RAPOR-8: bash.log durumu"
+    - name: "RAPOR-8: bash.log"
       ansible.builtin.debug:
-        msg: "=== bash.log: Dosya={% if bash_log_stat.stat.exists %}VAR{% else %}YOK{% endif %} | Izin={% if bash_log_stat.stat.exists and bash_log_stat.stat.mode == '0640' %}DOGRU (640){% elif bash_log_stat.stat.exists %}HATALI ({{ bash_log_stat.stat.mode }}){% else %}N/A{% endif %} ==="
+        msg: "=== bash.log: Dosya={% if bash_log_stat.stat.exists %}VAR{% else %}YOK{% endif %} Izin={% if bash_log_stat.stat.exists and bash_log_stat.stat.mode == '0640' %}DOGRU(640){% elif bash_log_stat.stat.exists %}HATALI({{ bash_log_stat.stat.mode }}){% else %}N/A{% endif %} ==="
 
-    # TASK 9: 50-default.conf kurallari
-    - name: "KONTROL-9: 50-default.conf her bir kuralin tam metin kontrolu"
+    - name: "KONTROL-9: 50-default.conf kurallari"
       ansible.builtin.lineinfile:
         path: /etc/rsyslog.d/50-default.conf
         line: "{{ item }}"
@@ -173,49 +158,43 @@
       loop: "{{ default_50_kurallar }}"
       failed_when: false
 
-    - name: "RAPOR-9: 50-default.conf durumu (ozet)"
+    - name: "RAPOR-9: 50-default.conf sonuclari"
       ansible.builtin.debug:
-        msg: 
-          - "=== 50-default.conf KONTROL SONUCLARI ==="
-          - "{% for item in default50_kontroller.results %}"
-          - "  Kural: {{ item.line }} -> {% if not item.changed %}DOGRU{% else %}HATALI veya EKSIK{% endif %}"
-          - "{% endfor %}"
+        var: default50_kontroller.results
 
-    # TASK 10: Servis durumlari
-    - name: "KONTROL-10A: Rsyslog servis durumu"
+    - name: "KONTROL-10A: Rsyslog servisi"
       ansible.builtin.shell: systemctl is-active rsyslog
       register: rsyslog_durum
       failed_when: false
       changed_when: false
 
-    - name: "RAPOR-10A: Rsyslog servisi"
+    - name: "RAPOR-10A: Rsyslog"
       ansible.builtin.debug:
-        msg: "=== Rsyslog Servisi: {% if rsyslog_durum.rc == 0 %}AKTIF{% else %}AKTIF DEGIL{% endif %} ==="
+        msg: "=== Rsyslog: {% if rsyslog_durum.rc == 0 %}AKTIF{% else %}AKTIF DEGIL{% endif %} ==="
 
-    - name: "KONTROL-10B: Auditd servis durumu"
+    - name: "KONTROL-10B: Auditd servisi"
       ansible.builtin.shell: systemctl is-active auditd
       register: auditd_durum
       failed_when: false
       changed_when: false
 
-    - name: "RAPOR-10B: Auditd servisi"
+    - name: "RAPOR-10B: Auditd"
       ansible.builtin.debug:
-        msg: "=== Auditd Servisi: {% if auditd_durum.rc == 0 %}AKTIF{% else %}AKTIF DEGIL{% endif %} ==="
+        msg: "=== Auditd: {% if auditd_durum.rc == 0 %}AKTIF{% else %}AKTIF DEGIL{% endif %} ==="
 
-    # FINAL RAPOR
-    - name: "===== FINAL RAPOR ====="
+    - name: "FINAL RAPOR"
       ansible.builtin.debug:
         msg:
           - "************************************************"
-          - "KONTROL SONUCLARI"
+          - "FINAL SONUCLAR"
           - "************************************************"
           - "1. /etc/profile: {% if not profile_kontrol.changed %}DOGRU{% else %}HATALI{% endif %}"
           - "2. /root/.bashrc: {% if not bashrc_kontrol.changed %}DOGRU{% else %}HATALI{% endif %}"
-          - "3. Audit plugin active=yes: {% if audit_plugin_kontrol is defined and not audit_plugin_kontrol.changed %}DOGRU{% elif audit_plugin_kontrol is defined %}HATALI{% else %}DOSYA YOK{% endif %}"
-          - "4. QRadar IP (192.168.121.21): {% if not qradar_ip_kontrol.changed %}DOGRU{% else %}HATALI{% endif %}"
+          - "3. Audit plugin: {% if audit_plugin_kontrol is defined and not audit_plugin_kontrol.changed %}DOGRU{% elif audit_plugin_kontrol is defined %}HATALI{% else %}DOSYA YOK{% endif %}"
+          - "4. QRadar IP: {% if not qradar_ip_kontrol.changed %}DOGRU{% else %}HATALI{% endif %}"
           - "5. Audit log blogu: {% if not audit_log_blogu_kontrol.changed %}DOGRU{% else %}HATALI{% endif %}"
           - "6. bash.conf: {% if bash_conf_stat.stat.exists and bash_conf_icerik_kontrol is defined and not bash_conf_icerik_kontrol.changed %}DOGRU{% elif not bash_conf_stat.stat.exists %}DOSYA YOK{% else %}HATALI{% endif %}"
           - "7. bash.log: {% if bash_log_stat.stat.exists and bash_log_stat.stat.mode == '0640' %}DOGRU{% elif not bash_log_stat.stat.exists %}DOSYA YOK{% else %}HATALI{% endif %}"
-          - "8. Rsyslog servis: {% if rsyslog_durum.rc == 0 %}AKTIF{% else %}AKTIF DEGIL{% endif %}"
-          - "9. Auditd servis: {% if auditd_durum.rc == 0 %}AKTIF{% else %}AKTIF DEGIL{% endif %}"
+          - "8. Rsyslog: {% if rsyslog_durum.rc == 0 %}AKTIF{% else %}AKTIF DEGIL{% endif %}"
+          - "9. Auditd: {% if auditd_durum.rc == 0 %}AKTIF{% else %}AKTIF DEGIL{% endif %}"
           - "************************************************"
