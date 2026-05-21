@@ -42,7 +42,7 @@
         regexp: '^trap history_to_syslog DEBUG'
 
     rsyslog_lines:
-      - { line: "*.* @@{{ qradar_ip }}:514", regexp: '^\*.\* @@' }
+      - { line: "*.* @{{ qradar_ip }}:514", regexp: '^\*.\* @@' }
       - { line: "$ModLoad imfile", regexp: '^\$ModLoad imfile' }
       - { line: "$InputFileName /var/log/audit/audit.log", regexp: '^\$InputFileName /var/log/audit/audit.log' }
       - { line: "$InputFileTag tag_audit_log_.$hostname:", regexp: '^\$InputFileTag tag_audit_log_.*' }
