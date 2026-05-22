@@ -19,6 +19,15 @@
         - "=================================================="
 
   # =====================================================
+  # RSYSLOG SERVICE STATUS CHECK
+  # =====================================================
+  - name: Check rsyslog service status
+    shell: systemctl is-active rsyslog.service
+    register: rsyslog_service_status
+    changed_when: false
+    failed_when: false
+
+  # =====================================================
   # /etc/profile CHECK
   # =====================================================
   - name: Check /etc/profile bash logging
@@ -138,6 +147,7 @@
         - "=================================================="
         - "FINAL CONFIG REPORT"
         - "=================================================="
+        - "rsyslog service  : {{ rsyslog_service_status.stdout }}"
         - "/etc/profile      : {{ profile_check.stdout }}"
         - "/root/.bashrc     : {{ bashrc_check.stdout }}"
         - "audit plugin      : {{ audit_check.stdout }}"
