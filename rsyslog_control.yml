@@ -37,7 +37,7 @@
       grep -Fq 'logger -p local5.debug -- Bash SESSION=$$, from_remote_host=$PORT, USER=$LOG_NAME, PWD=$p_dir, CMD="${cmd}"' /etc/profile &&
       grep -Fq 'old_command=$cmd' /etc/profile &&
       grep -Fq 'trap history_to_syslog DEBUG || EXIT' /etc/profile &&
-      echo "PASS" || echo "FAIL"
+      echo "SUCCESSFUL" || echo "FAIL"
     register: profile_check
     changed_when: false
 
@@ -60,7 +60,7 @@
       grep -Fq 'logger -p local5.debug -- Bash SESSION=$$, from_remote_host=$PORT, USER=$LOG_NAME, PWD=$p_dir, CMD="${cmd}"' /root/.bashrc &&
       grep -Fq 'old_command=$cmd' /root/.bashrc &&
       grep -Fq 'trap history_to_syslog DEBUG || EXIT' /root/.bashrc &&
-      echo "PASS" || echo "FAIL"
+      echo "SUCCESSFUL" || echo "FAIL"
     register: bashrc_check
     changed_when: false
 
@@ -72,7 +72,7 @@
       (
         grep -Fq 'active = yes' /etc/audit/plugins.d/syslog.conf ||
         grep -Fq 'active = yes' /etc/audisp/plugins.d/syslog.conf
-      ) && echo "PASS" || echo "FAIL"
+      ) && echo "SUCCESSFUL" || echo "FAIL"
     register: audit_check
     changed_when: false
 
@@ -83,7 +83,7 @@
     shell: |
       test -f /var/log/bash.log &&
       stat -c %a /var/log/bash.log | grep -Fxq '640' &&
-      echo "PASS" || echo "FAIL"
+      echo "SUCCESSFUL" || echo "FAIL"
     register: bashlog_check
     changed_when: false
 
@@ -93,7 +93,7 @@
   - name: Check bash.conf
     shell: |
       grep -Eq '^local5\.debug[[:space:]]+/var/log/bash\.log$' /etc/rsyslog.d/bash.conf &&
-      echo "PASS" || echo "FAIL"
+      echo "SUCCESSFUL" || echo "FAIL"
     register: bashconf_check
     changed_when: false
 
@@ -110,7 +110,7 @@
       grep -Fq '$InputFileSeverity info' /etc/rsyslog.conf &&
       grep -Fq '$InputFileFacility local6' /etc/rsyslog.conf &&
       grep -Fq '$InputRunFileMonitor' /etc/rsyslog.conf &&
-      echo "PASS" || echo "FAIL"
+      echo "SUCCESSFUL" || echo "FAIL"
     register: rsyslog_check
     changed_when: false
 
@@ -125,7 +125,7 @@
       grep -Fq 'local1.*                        /var/log/sudo.log' /etc/rsyslog.d/50-default.conf &&
       grep -Fq 'mail.err                        /var/log/mail.err' /etc/rsyslog.d/50-default.conf &&
       grep -Fq '*.emerg                         :omusrmsg:*' /etc/rsyslog.d/50-default.conf &&
-      echo "PASS" || echo "FAIL"
+      echo "SUCCESSFUL" || echo "FAIL"
     register: default_check
     changed_when: false
 
