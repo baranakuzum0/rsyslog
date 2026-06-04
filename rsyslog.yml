@@ -4,7 +4,7 @@
   become: yes
 
   vars:
-    qradar_ip: "192.168.121.21"
+    qradar_ip: "192.168.121.20"
 
     bash_log_entries:
       - line: |
