@@ -52,25 +52,7 @@
       - { line: "$InputRunFileMonitor", regexp: '^\$InputRunFileMonitor' }
 
   tasks:
-
-    - name: Auditd kurulumu
-      apt:
-        name: auditd
-        state: present
-        update_cache: yes
-
-    - name: Auditd servisini aktif et
-      service:
-        name: auditd
-        state: started
-        enabled: yes
-
-    - name: Rsyslog servisini aktif et
-      service:
-        name: rsyslog
-        state: started
-        enabled: yes
-
+  
     - name: Audit syslog plugin aktif et
       lineinfile:
         path: /etc/audit/plugins.d/syslog.conf
