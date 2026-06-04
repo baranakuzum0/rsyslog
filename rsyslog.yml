@@ -157,6 +157,9 @@
         - { line: "*.emerg                         :omusrmsg:*", regexp: '^\*\.emerg' }
 
     - name: Rsyslog servisini yeniden başlat (50-default.conf değişiklik sonrası)
+      ansible.builtin.systemd:
+        name: rsyslog
+        state: restarted
 
     - name: Rsyslog servisini yeniden başlat (final)
       service:
