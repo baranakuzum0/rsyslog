@@ -86,13 +86,13 @@
     - name: Bash log dosyasını oluştur (yoksa)
       file:
         path: /var/log/bash.log
-        state: file
+        state: touch
         owner: root
         group: adm
         mode: '0640'
       when: not bash_log_stat.stat.exists
 
-    - name: Bash log script eksik satırları ekle (/etc/profile)
+    - name: Bash log script ekle (/etc/profile)
       blockinfile:
         path: /etc/profile
         marker: "# {mark} ANSIBLE_BASH_LOG"
@@ -102,7 +102,7 @@
           {% endfor %}
         insertafter: EOF
 
-    - name: Bash log script eksik satırları ekle (/root/.bashrc)
+    - name: Bash log script ekle (/root/.bashrc)
       blockinfile:
         path: /root/.bashrc
         marker: "# {mark} ANSIBLE_BASH_LOG"
@@ -112,13 +112,13 @@
           {% endfor %}
         insertafter: EOF
 
-    - name: Rsyslog bash konfig var mı kontrol et
+    - name: Rsyslog bash config kontrol
       shell: grep -q '^local5.debug\s\+/var/log/bash.log' /etc/rsyslog.d/bash.conf
       register: bash_rsyslog
       failed_when: false
       changed_when: false
 
-    - name: Rsyslog bash konfig ekle (eksikse)
+    - name: Rsyslog bash config ekle
       copy:
         dest: /etc/rsyslog.d/bash.conf
         content: |
@@ -128,21 +128,15 @@
         mode: '0644'
       when: bash_rsyslog.rc != 0
 
-    - name: Rsyslog.conf eksik QRadar + Auditd satırlarını ekle
+    - name: Rsyslog.conf QRadar + Auditd satırları
       lineinfile:
         path: /etc/rsyslog.conf
         regexp: "{{ item.regexp }}"
         line: "{{ item.line }}"
         insertafter: EOF
-        state: present
       loop: "{{ rsyslog_lines }}"
 
-    - name: Rsyslog yeniden başlat
-      service:
-        name: rsyslog
-        state: restarted
-
-    - name: 50-default.conf eksik log kurallarını ekle
+    - name: 50-default.conf log kuralları
       lineinfile:
         path: /etc/rsyslog.d/50-default.conf
         line: "{{ item.line }}"
@@ -156,23 +150,15 @@
         - { line: "mail.err                        /var/log/mail.err", regexp: '^mail\.err' }
         - { line: "*.emerg                         :omusrmsg:*", regexp: '^\*\.emerg' }
 
-    - name: Rsyslog servisini yeniden başlat (50-default.conf değişiklik sonrası)
-      ansible.builtin.systemd:
-        name: rsyslog
-        state: restarted
-
-    - name: Rsyslog servisini yeniden başlat (final)
+    - name: Rsyslog servisini yeniden başlat
       service:
         name: rsyslog
         state: restarted
 
-    - name: Rsyslog servis durumu kontrol et
+    - name: Rsyslog servis durumu kontrol
       command: systemctl status rsyslog --no-pager
       register: rsyslog_status
 
-    - name: Rsyslog status çıktısını göster
+    - name: Rsyslog status çıktısı
       debug:
         var: rsyslog_status.stdout_lines
-      service:
-        name: rsyslog
-        state: restarted
