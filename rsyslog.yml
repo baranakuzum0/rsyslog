@@ -68,41 +68,6 @@
 
   tasks:
 
-    # 🔥 RSYSLOG SAFE CHECK (EKLENDİ)
-    - name: rsyslog kurulu mu kontrol et
-      command: systemctl is-active rsyslog
-      register: rsyslog_state
-      failed_when: false
-      changed_when: false
-
-    # 🔥 RSYSLOG YOKSA KUR (EKLENDİ)
-    - name: rsyslog yoksa kur
-      apt:
-        name: rsyslog
-        state: present
-        update_cache: yes
-      when: rsyslog_state.rc != 0
-
-    # 🔥 RSYSLOG START (SADECE YOKSA / BOZUKSA)
-    - name: rsyslog servisini başlat
-      service:
-        name: rsyslog
-        state: started
-        enabled: yes
-      failed_when: false
-
-    - name: Auditd kurulumu
-      apt:
-        name: auditd
-        state: present
-        update_cache: yes
-
-    - name: Auditd servisini aktif et
-      service:
-        name: auditd
-        state: started
-        enabled: yes
-
     - name: Audit syslog plugin aktif et
       lineinfile:
         path: /etc/audit/plugins.d/syslog.conf
