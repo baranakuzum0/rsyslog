@@ -140,6 +140,9 @@
   # ==================================================
   # DEBUG OUTPUT
   # ==================================================
-  - name: Show rsyslog validation result
-    debug:
-      var: rsyslog_check.stderr_lines
+- name: Check rsyslog service
+  service_facts:
+
+- name: Show rsyslog state
+  debug:
+    msg: "{{ ansible_facts.services['rsyslog.service'].state }}"
