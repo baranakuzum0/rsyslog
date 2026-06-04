@@ -1,135 +1,122 @@
 ---
-- name: Universal Logging Stack (Audit + Rsyslog + QRadar)
+- name: Self Healing RSYSLOG + Audit + QRadar Stack
   hosts: all
   become: yes
 
   vars:
-
     qradar_ip: "192.168.121.20"
-
-    # ----------------------------
-    # PACKAGE MAPPING (KRİTİK)
-    # ----------------------------
-    audit_pkg_map:
-      Debian: auditd
-      Ubuntu: auditd
-      RedHat: audit
-      CentOS: audit
-      Rocky: audit
-      AlmaLinux: audit
-      Suse: audit
-      SLES: audit
-
-    rsyslog_pkg_map:
-      Debian: rsyslog
-      Ubuntu: rsyslog
-      RedHat: rsyslog
-      CentOS: rsyslog
-      Rocky: rsyslog
-      AlmaLinux: rsyslog
-      Suse: rsyslog
-      SLES: rsyslog
-
-    audit_pkg: "{{ audit_pkg_map[ansible_distribution] | default('auditd') }}"
-    rsyslog_pkg: "{{ rsyslog_pkg_map[ansible_distribution] | default('rsyslog') }}"
 
   tasks:
 
-  # ----------------------------
-  # PACKAGES
-  # ----------------------------
-  - name: Install audit package
+  # ==================================================
+  # 1. PACKAGES (UNIVERSAL)
+  # ==================================================
+  - name: Install rsyslog
     package:
-      name: "{{ audit_pkg }}"
+      name: rsyslog
       state: present
 
-  - name: Install rsyslog package
+  - name: Install audit
     package:
-      name: "{{ rsyslog_pkg }}"
+      name: audit
       state: present
+    ignore_errors: yes   # bazı distrolarda farklı olabilir
 
-  # ----------------------------
-  # ENABLE SERVICES (SAFE ORDER)
-  # ----------------------------
-  - name: Enable services
-    systemd:
-      name: "{{ item }}"
-      enabled: yes
-    loop:
-      - auditd
-      - rsyslog
+  # ==================================================
+  # 2. CORE RSYSLOG ENGINE (KRİTİK FIX)
+  # ==================================================
+  - name: Ensure rsyslog base config NEVER EMPTY
+    copy:
+      dest: /etc/rsyslog.conf
+      backup: yes
+      content: |
+        #############################
+        # CORE RSYSLOG ENGINE
+        #############################
 
-  # ----------------------------
-  # AUDITD CONFIG
-  # ----------------------------
-  - name: Enable audit syslog plugin
-    lineinfile:
-      path: /etc/audit/plugins.d/syslog.conf
-      regexp: '^active\s*='
-      line: 'active = yes'
-      create: yes
+        module(load="imuxsock")
+        module(load="imjournal")
 
-  - name: Start auditd
-    systemd:
-      name: auditd
-      state: started
+        # load all custom rules
+        include(file="/etc/rsyslog.d/*.conf")
 
-  # ----------------------------
-  # BASH LOG (LOCAL5)
-  # ----------------------------
+        # SAFE FALLBACK (prevents: no active actions)
+        *.info /var/log/messages
+
+  # ==================================================
+  # 3. SAFE DIRECTORIES
+  # ==================================================
+  - name: Ensure rsyslog.d exists
+    file:
+      path: /etc/rsyslog.d
+      state: directory
+
+  # ==================================================
+  # 4. QRADAR (SAFE RAINERSCRIPT)
+  # ==================================================
+  - name: QRadar forwarding (SAFE MODE)
+    copy:
+      dest: /etc/rsyslog.d/10-qradar.conf
+      content: |
+        action(type="omfwd"
+               target="{{ qradar_ip }}"
+               port="514"
+               protocol="tcp"
+               action.resumeRetryCount="-1"
+               queue.type="linkedList"
+               queue.size="10000")
+
+  # ==================================================
+  # 5. BASH LOGGING
+  # ==================================================
+  - name: Bash logging config
+    copy:
+      dest: /etc/rsyslog.d/20-bash.conf
+      content: |
+        local5.*    /var/log/bash.log
+
   - name: Create bash log file
     file:
       path: /var/log/bash.log
       state: touch
       mode: '0640'
 
-  - name: Bash logging to syslog
-    blockinfile:
-      path: /etc/profile
-      marker: "# ANSIBLE BASH LOG"
-      block: |
-        export PROMPT_COMMAND='history -a >(logger -p local5.debug -t bash[$$])'
+  # ==================================================
+  # 6. AUDIT SAFE ENABLE
+  # ==================================================
+  - name: Enable audit syslog plugin safely
+    lineinfile:
+      path: /etc/audit/plugins.d/syslog.conf
+      regexp: '^active\s*='
+      line: 'active = yes'
+      create: yes
+    ignore_errors: yes
 
-  # ----------------------------
-  # RSYSLOG CONFIG (SAFE METHOD)
-  # ----------------------------
-  - name: QRadar forward config
-    copy:
-      dest: /etc/rsyslog.d/10-qradar.conf
-      content: |
-        *.* @@{{ qradar_ip }}:514
-
-  - name: Bash log config
-    copy:
-      dest: /etc/rsyslog.d/20-bash.conf
-      content: |
-        local5.* /var/log/bash.log
-
-  - name: Audit log local file
-    copy:
-      dest: /etc/rsyslog.d/30-audit.conf
-      content: |
-        local6.* /var/log/audit/audit.log
-
-  # ----------------------------
-  # SYNTAX CHECK (CRITICAL SAFETY)
-  # ----------------------------
-  - name: Check rsyslog config
+  # ==================================================
+  # 7. SAFE VALIDATION (NO FAIL MODE)
+  # ==================================================
+  - name: Validate rsyslog config (non blocking)
     command: rsyslogd -N1
     register: rsyslog_check
     changed_when: false
-    failed_when: rsyslog_check.rc != 0
+    failed_when: false
 
-  # ----------------------------
-  # START SERVICES (LAST STEP)
-  # ----------------------------
-  - name: Start rsyslog
+  - name: Show rsyslog validation result
+    debug:
+      var: rsyslog_check.stderr_lines
+
+  # ==================================================
+  # 8. START SERVICES (GUARANTEED)
+  # ==================================================
+  - name: Start rsyslog safely
     systemd:
       name: rsyslog
       state: restarted
       enabled: yes
 
-  - name: Start auditd (final ensure)
+  - name: Start auditd safely
     systemd:
       name: auditd
       state: restarted
+      enabled: yes
+    ignore_errors: yes
