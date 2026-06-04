@@ -1,60 +1,72 @@
 ---
-- name: Self Healing RSYSLOG + Audit + QRadar Stack
+- name: RSYSLOG + AUDIT + QRADAR (Production Safe One Page)
   hosts: all
   become: yes
 
   vars:
-    qradar_ip: "192.168.121.20"
+    qradar_ip: "192.168.121.21"
 
   tasks:
 
   # ==================================================
-  # 1. PACKAGES (UNIVERSAL)
+  # PACKAGES (SAFE INSTALL)
   # ==================================================
   - name: Install rsyslog
     package:
       name: rsyslog
       state: present
+    failed_when: false
 
-  - name: Install audit
+  - name: Install auditd
     package:
       name: audit
       state: present
-    ignore_errors: yes   # bazı distrolarda farklı olabilir
+    failed_when: false
 
   # ==================================================
-  # 2. CORE RSYSLOG ENGINE (KRİTİK FIX)
+  # ENABLE SERVICES
   # ==================================================
-  - name: Ensure rsyslog base config NEVER EMPTY
+  - name: Enable rsyslog + auditd
+    systemd:
+      name: "{{ item }}"
+      enabled: yes
+    loop:
+      - rsyslog
+      - auditd
+    failed_when: false
+
+  - name: Start services
+    systemd:
+      name: "{{ item }}"
+      state: started
+    loop:
+      - rsyslog
+      - auditd
+    failed_when: false
+
+  # ==================================================
+  # RSYSLOG CORE ENGINE (NEVER PATCH EXISTING)
+  # ==================================================
+  - name: Ensure rsyslog base engine exists
     copy:
       dest: /etc/rsyslog.conf
       backup: yes
       content: |
-        #############################
-        # CORE RSYSLOG ENGINE
-        #############################
-
         module(load="imuxsock")
         module(load="imjournal")
 
-        # load all custom rules
         include(file="/etc/rsyslog.d/*.conf")
 
-        # SAFE FALLBACK (prevents: no active actions)
-        *.info /var/log/messages
+        *.info;mail.none;authpriv.none;cron.none /var/log/messages
+        authpriv.* /var/log/secure
+        mail.* /var/log/maillog
+        cron.* /var/log/cron
 
   # ==================================================
-  # 3. SAFE DIRECTORIES
+  # DROP-IN CONFIGS (SAFE LAYER)
   # ==================================================
-  - name: Ensure rsyslog.d exists
-    file:
-      path: /etc/rsyslog.d
-      state: directory
 
-  # ==================================================
-  # 4. QRADAR (SAFE RAINERSCRIPT)
-  # ==================================================
-  - name: QRadar forwarding (SAFE MODE)
+  - name: QRadar forwarding (SAFE TCP)
     copy:
       dest: /etc/rsyslog.d/10-qradar.conf
       content: |
@@ -65,16 +77,23 @@
                action.resumeRetryCount="-1"
                queue.type="linkedList"
                queue.size="10000")
+    failed_when: false
 
-  # ==================================================
-  # 5. BASH LOGGING
-  # ==================================================
-  - name: Bash logging config
+  - name: Bash logging
     copy:
       dest: /etc/rsyslog.d/20-bash.conf
       content: |
         local5.*    /var/log/bash.log
 
+  - name: Audit log rule
+    copy:
+      dest: /etc/rsyslog.d/30-audit.conf
+      content: |
+        local6.*    /var/log/audit/audit.log
+
+  # ==================================================
+  # BASH LOG FILE
+  # ==================================================
   - name: Create bash log file
     file:
       path: /var/log/bash.log
@@ -82,41 +101,45 @@
       mode: '0640'
 
   # ==================================================
-  # 6. AUDIT SAFE ENABLE
+  # AUDIT SYSLOG ENABLE
   # ==================================================
-  - name: Enable audit syslog plugin safely
+  - name: Enable audit syslog plugin
     lineinfile:
       path: /etc/audit/plugins.d/syslog.conf
       regexp: '^active\s*='
       line: 'active = yes'
       create: yes
-    ignore_errors: yes
+    failed_when: false
 
   # ==================================================
-  # 7. SAFE VALIDATION (NO FAIL MODE)
+  # VALIDATION (NON BLOCKING)
   # ==================================================
-  - name: Validate rsyslog config (non blocking)
+  - name: Validate rsyslog config
     command: rsyslogd -N1
     register: rsyslog_check
     changed_when: false
     failed_when: false
 
-  - name: Show rsyslog validation result
-    debug:
-      var: rsyslog_check.stderr_lines
-
   # ==================================================
-  # 8. START SERVICES (GUARANTEED)
+  # FINAL RESTART (SAFE)
   # ==================================================
-  - name: Start rsyslog safely
+  - name: Restart rsyslog
     systemd:
       name: rsyslog
       state: restarted
       enabled: yes
+    failed_when: false
 
-  - name: Start auditd safely
+  - name: Restart auditd
     systemd:
       name: auditd
       state: restarted
       enabled: yes
-    ignore_errors: yes
+    failed_when: false
+
+  # ==================================================
+  # DEBUG OUTPUT
+  # ==================================================
+  - name: Show rsyslog validation result
+    debug:
+      var: rsyslog_check.stderr_lines
