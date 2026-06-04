@@ -157,6 +157,19 @@
         - { line: "*.emerg                         :omusrmsg:*", regexp: '^\*\.emerg' }
 
     - name: Rsyslog servisini yeniden başlat (50-default.conf değişiklik sonrası)
+
+        - name: Rsyslog servisini yeniden başlat (final)
+      service:
+        name: rsyslog
+        state: restarted
+
+    - name: Rsyslog servis durumu kontrol et
+      command: systemctl status rsyslog --no-pager
+      register: rsyslog_status
+
+    - name: Rsyslog status çıktısını göster
+      debug:
+        var: rsyslog_status.stdout_lines
       service:
         name: rsyslog
         state: restarted
