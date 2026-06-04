@@ -158,7 +158,7 @@
 
     - name: Rsyslog servisini yeniden başlat (50-default.conf değişiklik sonrası)
 
-        - name: Rsyslog servisini yeniden başlat (final)
+    - name: Rsyslog servisini yeniden başlat (final)
       service:
         name: rsyslog
         state: restarted
