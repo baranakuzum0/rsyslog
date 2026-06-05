@@ -128,12 +128,12 @@
   # =====================================================
   - name: Check 50-default.conf
     shell: |
-      grep -Fq 'auth,authpriv.*                 /var/log/auth.log' /etc/rsyslog.d/50-default.conf &&
-      grep -Fq '*.*;auth,authpriv.none          -/var/log/syslog' /etc/rsyslog.d/50-default.conf &&
-      grep -Fq 'cron.*                          /var/log/cron.log' /etc/rsyslog.d/50-default.conf &&
-      grep -Fq 'local1.*                        /var/log/sudo.log' /etc/rsyslog.d/50-default.conf &&
-      grep -Fq 'mail.err                        /var/log/mail.err' /etc/rsyslog.d/50-default.conf &&
-      grep -Fq '*.emerg                         :omusrmsg:*' /etc/rsyslog.d/50-default.conf &&
+      grep -q 'auth,authpriv.* */var/log/auth.log' /etc/rsyslog.d/50-default.conf &&
+      grep -q '\*\.\*;auth,authpriv.none *-/var/log/syslog' /etc/rsyslog.d/50-default.conf &&
+      grep -q 'cron.* */var/log/cron.log' /etc/rsyslog.d/50-default.conf &&
+      grep -q 'local1.* */var/log/sudo.log' /etc/rsyslog.d/50-default.conf &&
+      grep -q 'mail.err */var/log/mail.err' /etc/rsyslog.d/50-default.conf &&
+      grep -q '\*.emerg *:omusrmsg:\*' /etc/rsyslog.d/50-default.conf &&
       echo "SUCCESSFUL" || echo "FAIL"
     register: default_check
     changed_when: false
