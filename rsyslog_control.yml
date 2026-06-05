@@ -111,7 +111,7 @@
   # =====================================================
   - name: Check rsyslog.conf
     shell: |
-      grep -Eq '^\*\.\* @@192\.168\.121\.21:514$' /etc/rsyslog.conf &&
+      grep -Eq '^\*\.\* @192\.168\.121\.21:514$' /etc/rsyslog.conf &&
       grep -Fq '$ModLoad imfile' /etc/rsyslog.conf &&
       grep -Fq '$InputFileName /var/log/audit/audit.log' /etc/rsyslog.conf &&
       grep -Fq '$InputFileTag tag_audit_log_.$hostname:' /etc/rsyslog.conf &&
